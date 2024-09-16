@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+# Created: 20 Oct 2023
+# Updated: 16 Sep 2024
+
+
+import sys
+from sys import exit
+
+import shutil
+
+import pyogrio
+from pandas import concat as pd_concat
+from geopandas import GeoDataFrame
+
+
+# Parse command line arguments
+args = sys.argv[1:]
+if len(args) < 2:
+    print("Usage: catgpkg IN_GPKG... OUT_GPKG")
+    exit(1)
+
+in_gpkgs = args[:-1]
+out_pth = args[-1]
+
+# If only one input file, rename and exit
+if len(args) == 2:
+    print("Only one input file, so copying original...")
+    shutil.copy(in_gpkgs[0], out_pth)
+    exit()
+
+# Load two input GPKG files
+print("Loading input files...")
+gpkgs = [pyogrio.read_dataframe(p) for p in in_gpkgs]
+
+# Warn if GPKG files do not all have same CRS
+reprojected_gpkgs = []
+for g in gpkgs:
+    print(f"Input CRS: {g.crs.to_string()} ({g.crs.name})")
+    if g.crs != gpkgs[0].crs:
+        print("WARNING: CRS does not match (will use CRS of first input file)")
+        g = g.to_crs(gpkgs[0].crs)
+    
+    reprojected_gpkgs.append(g)
+
+gpkgs = reprojected_gpkgs
+
+# Merged GPKG files
+df = pd_concat(gpkgs, axis=0, ignore_index=True)
+df = GeoDataFrame(df, crs=gpkgs[0].crs)
+
+# Save merged GPKG
+print("Saving:", out_pth)
+df.to_file(out_pth)
