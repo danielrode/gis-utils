@@ -5,9 +5,11 @@
 #   podman 5.1.2
 
 
-# Decide whether to use Docker or Podman
-container_manager=podman
+CONTAINER_MANAGER=podman
+
 
 # Run container
-podman run -it --rm -v "/home/$USER:/home/$USER" localhost/rgeo:v1 \
-  bash -c "cd $PWD; exec R --no-save"
+$CONTAINER_MANAGER run -it --rm -v "/home/$USER:/home/$USER" \
+  localhost/rgeo:v1 \
+  bash -c "cd $PWD; exec R --no-save" \
+;
