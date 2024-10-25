@@ -12,6 +12,6 @@ CONTAINER_MANAGER=podman
 $CONTAINER_MANAGER run -it --rm \
   -v "/home/$USER:/home/$USER" \
   -v "/mnt:/mnt" \
-  localhost/rgeo:v1 \
+  localhost/rgeo:v2 \
   bash -c "cd $PWD; exec R --no-save" \
 ;
