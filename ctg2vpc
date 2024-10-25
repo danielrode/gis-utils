@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+# Author: Daniel Rode
+# Dependencies:
+#   python 3.12
+#   pdal
+# Created: 02 Oct 2024
+# Updated: -
+
+
+import sys
+import tempfile
+import subprocess as sp
+from sys import exit
+from pathlib import Path
+
+
+HELP_TEXT = """Usage: this.py  LAS_DIR  OUT_VPC_PATH"""
+LAS_EXT = '.copc.laz'
+PDAL_WRENCH_EXE = "/usr/lib64/qgis/pdal_wrench"
+
+
+def print2(*args, **kwargs):
+  print(*args, file=sys.stderr, **kwargs)
+
+def pdal_mosaic(tile_list, dst_pth):
+  # Virtual mosaic point cloud tiles
+  cmd = [
+    PDAL_WRENCH_EXE, 'build_vpc',
+    '--input-file-list', tile_list,
+    '--output', dst_pth,
+  ]
+  sp.run(cmd, check=True)
+
+  return dst_pth
+
+def main():
+  # Parse command line arguments
+  args = sys.argv[1:]
+  try:
+    src_dir = Path(args[0])
+    dst_pth = Path(args[1])
+  except IndexError:
+    print(HELP_TEXT)
+    exit(1)
+  if not src_dir.is_dir():
+    print2("error: Directory not found:", d)
+    exit(1)
+
+  # Use temp directory for intermediate files
+  with tempfile.TemporaryDirectory() as tmp_dir:
+    tmp_dir = Path(tmp_dir)
+
+    # Create temp text file with list of source tiles
+    tile_paths = src_dir.glob(f"**/*{LAS_EXT}")
+    tile_paths = [str(p) for p in tile_paths]
+    tile_list = tmp_dir/"tile_list.txt"
+    with tile_list.open('w') as f:
+      f.write('\n'.join(tile_paths))
+
+    # Virtual mosaic tiles
+    pdal_mosaic(tile_list, dst_pth)
+
+if __name__ == '__main__':
+  main()

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Author: Daniel Rode
+# Created: 18 Sep 2024
+# Updated: 25 Oct 2024
+
+
+# List files opened by a process and its decendents
+
+
+strace --follow-forks -e trace=open,openat "$@"

@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+# Author: Daniel Rode
+# Dependencies:
+#   python 3.12
+#   gdal
+#   find
+# Created: 30 Sep 2024
+# Updated: -
+
+
+import sys
+import tempfile
+import subprocess as sp
+from sys import exit
+from pathlib import Path
+
+
+HELP_TEXT = """Usage: this.py  TIF_DIR  OUT_TIF_PATH"""
+
+
+def print2(*args, **kwargs):
+  print(*args, file=sys.stderr, **kwargs)
+
+def find(query, dir_list):
+  cmd = [
+    'find', '-L', *dir_list,
+    '-type', 'f',
+    '-regex', query,
+    '-print0',
+  ]
+  p = sp.run(cmd, check=True, text=True, capture_output=True)
+
+  return p.stdout.split('\x00')
+
+def gdal_translate(*args):
+  args = [str(a) for a in args]
+  cmd = [
+    'gdal_translate',
+    '-co', 'COMPRESS=LZW',
+    '-co', 'TILED=YES',
+    *args
+  ]
+  sp.run(cmd, check=True)
+
+def gdal_mosaic(tile_list, dst_pth):
+  # Virtual mosaic raster tiles
+  cmd = [
+    'gdalbuildvrt',
+    '-input_file_list', tile_list,
+    dst_pth,
+  ]
+  sp.run(cmd, check=True)
+
+  return dst_pth
+
+def main():
+  # Parse command line arguments
+  args = sys.argv[1:]
+  try:
+    src_dir = Path(args[0])
+    dst_pth = Path(args[1])
+  except IndexError:
+    print(HELP_TEXT)
+    exit(1)
+  if not src_dir.is_dir():
+    print2("error: Directory not found:", d)
+    exit(1)
+
+  # Use temp directory for intermediate files
+  with tempfile.TemporaryDirectory() as tmp_dir:
+    tmp_dir = Path(tmp_dir)
+
+    # Create temp text file with list of source raster tiles
+    tile_paths = find(r'.*\.tif$', [src_dir])
+    tile_list = tmp_dir/"tile_list.txt"
+    with tile_list.open('w') as f:
+      f.write('\n'.join(tile_paths))
+
+    # Virtual mosaic raster tiles
+    gdal_mosaic(tile_list, dst_pth)
+
+if __name__ == '__main__':
+  main()

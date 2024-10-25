@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Author: Daniel Rode
+# Dependencies:
+#   bash 4+
+# Created: 29 Apr 2024
+# Updated: 08 May 2024
+
+
+function ts {
+  # Timestamp each line coming from pipe
+  while IFS= read -r line
+  do
+    printf '%s\t%s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line";
+  done
+}
+
+function avail_ram {
+  while true
+  do
+    cat /proc/meminfo | grep 'MemAvailable:'
+    sleep 2
+  done
+}
+
+function main {
+  avail_ram | ts
+}
+main

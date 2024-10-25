@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Original Author: tukan (https://unix.stackexchange.com/a/734513/33109)
+# Maintainer: Daniel Rode
+# Created: 13 Feb 2023
+# Updated: 03 May 2024
+
+
+# Setup temp directory and set it to be removed on exit
+tmpdir="$(mktemp -d)"
+function cleanup {
+  rm -fr "$tmpdir"
+}
+trap cleanup EXIT
+
+# Run command and track memory usage with valgrind
+valgrind \
+  --trace-children=yes \
+  --tool=massif \
+  --pages-as-heap=yes \
+  --massif-out-file="$tmpdir/massif.out" \
+  "$1"
+
+# Parse valgrind/massif output to find process tree's max memory usage
+grep mem_heap_B "$tmpdir/massif.out" |
+  sed -e 's/mem_heap_B=\(.*\)/\1/' |
+  sort -g |
+  tail -n 1

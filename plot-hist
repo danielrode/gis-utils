@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+# Author: Daniel Rode
+# Dependencies:
+#   python 3.12.6
+#   plotext
+# Created: 26 Sep 2024 
+# Updated: -
+
+
+import sys
+from sys import exit
+
+import plotext as plt
+
+
+BINS = 10
+YLOG = False
+TITLE = "Frequency Histogram"
+
+
+# Parse command line arguments
+args = iter(sys.argv[1:])
+for a in args:
+  match a:
+    case '-y' | '--y-axis-log-scale':
+      YLOG = True
+    case '-b' | '--bins':
+      BINS = int(next(args))
+    case '-t' | '--title':
+      TITLE = next(args)
+    case _:
+      print("error: Invalid flag", a)
+      exit(1)
+
+
+# Import data
+nums = [ float(i) for i in sys.stdin.readlines() ]
+
+# Limit plot height so terminal prompt does not cut off top of graph and to
+# make room for printing stats
+plt.plot_size(height=plt.terminal_height()-6)
+
+# Customize axis
+plt.xfrequency(10)  # Render 10 ticks on the x-axis
+
+# Plot data
+plt.title(TITLE)
+plt.xlabel("Value")
+plt.ylabel("Freq")
+plt.hist(nums, BINS)
+plt.show()

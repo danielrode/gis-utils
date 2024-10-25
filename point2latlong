@@ -1,0 +1,33 @@
+#!/usr/bin/env nu
+# Author: Daniel Rode
+# Created: 18 Sep 2024
+# Updated: -
+
+
+#todo
+import sys
+from sys import exit
+
+from pyproj import Transformer
+
+
+HELP_TEXT = "Usage: this.py  X  Y  CRS"
+
+
+# Parse command line arguments
+args = sys.argv[1:]
+try:
+    x_coord = float(args[0])
+    y_coord = float(args[1])
+    original_crs = args[2]
+except IndexError:
+    print(HELP_TEXT)
+    exit(1)
+    
+# Reproject coordinates
+lat, lon = Transformer.from_crs(
+    f"EPSG:{original_crs}",  # From CRS
+    "EPSG:4326",  # To CRS
+).transform(x_coord, y_coord)
+
+print(f"{lat},{lon}")

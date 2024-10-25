@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Author: Daniel Rode
+# Created: 07 May 2024
+
+
+if [ -z "$1" ]
+then
+  echo "Usage: this.sh CMD CMD_ARGS..."
+fi
+
+# Run program and log filesystem sys calls, as well as those of its children
+tmpdir="$(mktemp -d)"
+trace_log_pth="${tmpdir}/trace.log"
+echo "Trace log path: $trace_log_pth"
+strace -f -y \
+  -o "$trace_log_pth" \
+  -e trace=open,openat,close,read,write,connect,accept \
+  "$@"
+
+# Sum data amount of data read by process
+echo "Bytes read by process (and its children): "
+grep read "$trace_log_pth" | awk 'BEGIN {FS="="}{ sum += $2} END {print sum}'

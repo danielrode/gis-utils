@@ -1,0 +1,17 @@
+#!/usr/bin/env Rscript
+# Author: Daniel Rode
+# Dependencies:
+#   lidR
+# Created: 14 Jun 2024
+# Updated: -
+
+
+library(lidR)
+
+
+n_points <- 100
+las <- LAS(data = data.frame(
+  X = runif(n_points, 0, 100),  # Random X coordinates (meters)
+  Y = runif(n_points, 0, 100),  # Random Y coordinates (meters)
+  Z = runif(n_points, 0, 100)   # Random elevation (meters)
+))

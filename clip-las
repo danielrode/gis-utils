@@ -1,0 +1,41 @@
+#!/usr/bin/env Rscript
+# Author: Daniel Rode
+# Dependencies:
+#   sf
+#   lidR
+# Created: 30 Sep 2024
+# Updated: -
+
+
+# Description: Clip a given LiDAR file to a polygon.
+
+
+library(lidR)
+library(sf, warn.conflicts = FALSE)
+
+
+# Parse command line arguments
+args = commandArgs(trailingOnly = TRUE)
+if (length(args) < 3) {
+  print("Usage: Rscript clip-lidar.R  LAS  GEOM  OUTPUT")
+  quit(status = 1)
+}
+ctg_path = args[1]
+geom_path = args[2]
+out_path = args[3]
+
+for (p in c(ctg_path)) {
+  if (!(file.exists(p))) {
+    stop("error: File not found:", p)
+  }
+}
+
+# Import data
+pdf(NULL)
+ctg = lidR::readLAScatalog(ctg_path)
+bound = sf::read_sf(geom_path)
+
+# Clip and save
+bound = sf::st_transform(bound, sf::st_crs(ctg))
+clipped_ctg = lidR::clip_roi(ctg, bound)
+lidR::writeLAS(clipped_ctg, out_path)

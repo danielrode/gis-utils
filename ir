@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Author: Daniel Rode
+# Name: Interactive R (R Dubugger)
+# Dependencies:
+#   r 4.4
+#   gdb
+# Created: 08 Oct 2024
+# Updated: -
+
+
+# Usage: this.sh path/to/script.r scriptArg...
+
+
+set -e  # Exit on error
+set -m  # Enable job control
+
+# Setup temp dir
+tmpdir="$(mktemp -d)"
+function cleanup { rm -fr -- "$tmpdir"; }
+trap cleanup EXIT
+
+# Write R startup code to setup debugging environment
+cat <<EOF > "$tmpdir"/Rprofile
+library(base)
+library(datasets)
+library(grDevices)
+library(graphics)
+library(methods)
+library(stats)
+library(utils)
+
+args = commandArgs(trailingOnly = TRUE)
+commandArgs = function(...) args[2:length(args)]
+
+script = function() { source(args[1]); }
+# debug(script)
+script()
+EOF
+
+# Run R session
+args=(
+  --no-environ --no-site-file --no-restore-data
+  --no-save
+  --interactive
+  --args "$@"
+)
+R_PROFILE_USER="$tmpdir/Rprofile" R "${args[@]}"
+# DEBUGINFOD_URLS= R --vanilla --interactive --debugger gdb --args "$@"
