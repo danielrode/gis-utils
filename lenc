@@ -1,0 +1,26 @@
+#!/usr/bin/env nu
+# Author: Daniel Rode
+# Dependencies:
+#   nushell 0.87.1
+# Created: 14 Dec 2023
+# Updated: -
+
+
+# Count number of classified features in GPKG file
+
+
+def main [...pth: string] {
+	for p in $pth {
+		if not ($p | path exists) {
+			echo $"error: Path not found: ($p)"
+			continue
+		}
+		for layer in (open $p | get gpkg_contents.table_name) { 
+			let classified = (
+				open $p | get $layer | get Class |
+					filter { not ($in | is-empty) } | length
+			)
+			echo $"($p)/($layer): ($classified)"
+		}
+	}
+}

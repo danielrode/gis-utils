@@ -1,0 +1,5 @@
+#!/usr/bin/env dash
+
+
+# Runs /var/lib/flatpak/app/org.qgis.qgis/.../files/bin/ogr2ogr
+flatpak run --command=ogr2ogr org.qgis.qgis "$@"

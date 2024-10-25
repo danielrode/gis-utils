@@ -1,0 +1,41 @@
+#!/usr/bin/env nu
+# Author: Daniel Rode
+# Dependencies:
+#   nushell 0.87.1
+# Created: 15 Dec 2023
+# Updated: -
+
+
+# Show histogram of GPKG column
+
+
+def drop-null [] {
+	filter { not ($in | is-empty) } 
+}
+
+def main [col: string, ...pth: string] {
+	for p in $pth {
+		if not ($p | path exists) {
+			echo $"error: Path not found: ($p)"
+			exit 1
+		}
+		if ($p | path type) != 'file' {
+			echo $"error: Path is not file: ($p)"
+			exit 1
+		}
+		for layer in (open $p | get gpkg_contents.table_name) { 
+			echo $"($p)//($layer)//($col):"
+			try {
+				echo (open $p | get $layer | get $col | drop-null | histogram)
+			} catch {|err|
+				if $err.msg == "Cannot find column" {
+					echo $"error: Column not found in layer: ($col)"
+				} else {
+					echo $err.raw  # Print original error message
+				}
+				exit 1
+			}
+		}
+	}
+}
+

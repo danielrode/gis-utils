@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+# Dependencies:
+#   Python 3.10+
+#   GDAL
+#   QGIS
+#   Orfeo ToolBox
+#   GeoPandas
+# Version: 6
+# Init: 13 Oct 2023
+# Updated: 13 Dec 2023
+
+
+import os
+import sys
+import json
+import platform
+import shutil
+import tempfile
+import subprocess as sp
+from pathlib import Path
+
+from concurrent.futures import ProcessPoolExecutor
+
+import pandas as pd
+import geopandas as gpd
+
+from osgeo import ogr
+from osgeo import gdal
+
+
+# Constants
+max_concurrent = 8  # Num of workers to spawn in parallel when using dispatch
+qgis_proc_cmd = ["flatpak", "run", "--command=qgis_process", "org.qgis.qgis"]
+qgis_zonal_stats_log_pth = "./qgis_zonal_stats_log.txt"
+
+exe_name = sys.argv[0].split('/')[-1]  # This script's filename
+help_example = "Example: {exe_name} polygons.gpkg maxar.tif stats.gpkg"
+help_text = f"Usage: {exe_name} ZONES IMAGE OUTPUT\n{help_example}"
+
+safe_mode=False
+
+
+# Functions
+def dispatch(worker, tasks):
+    futures = []
+    with ProcessPoolExecutor(max_workers=max_concurrent) as executor:
+        for t in tasks:
+            futures.append(executor.submit(worker, **t))
+
+        for f in futures:
+            yield f.result()
+
+def qgis_process(tool_name, tool_params):
+    # Setup command call and args
+    tool_params = json.dumps(tool_params)
+
+    # Run QGIS Process
+    with open(qgis_zonal_stats_log_pth, 'a') as f:
+        p = sp.run(
+            qgis_proc_cmd + ["run", tool_name, "-"],
+            input=tool_params, text=True,
+            stdout=f, stderr=f,
+        )
+
+    if p.returncode != 0:
+        print("error: QGIS process failed")
+        print("Aborting...")
+        exit(1)
+
+def qgis_zonal_stats(zones_pth, img_pth, out_pth, band_id):
+    print(f"Calculating zonal stats for band {band_id}...")
+    
+    zones_layer_name = get_gpkg_layer_name(zones_pth, 0)
+    tool_params = {
+        "area_units": "m2",
+        "distance_units": "meters",
+        "ellipsoid": "EPSG:7030",
+        "inputs": {
+            "COLUMN_PREFIX": f"B{band_id}",
+            "INPUT": f"{zones_pth.as_posix()}|layername={zones_layer_name}",
+            "INPUT_RASTER": img_pth.as_posix(),
+            "OUTPUT": out_pth.as_posix(),
+            "RASTER_BAND": band_id,
+            "STATISTICS": [
+                2,   # mean
+                3,   # median
+                5,   # minimum
+                6,   # maximum
+                8,   # minority
+                9,   # majority
+                10,  # variety
+                11,  # variance
+            ],
+        }
+    }
+
+    qgis_process("native:zonalstatisticsfb", tool_params)
+
+def get_gpkg_layer_name(gpkg_pth, layer_index):
+    gpkg_pth = str(gpkg_pth)
+    gpkg = ogr.GetDriverByName('GPKG').Open(gpkg_pth, 0)
+    layer = gpkg.GetLayerByIndex(layer_index)
+    return layer.GetName()
+
+def len_tif_bands(tif_pth):
+    tif_pth = str(tif_pth)
+    tif = gdal.Open(tif_pth)
+    return tif.RasterCount
+
+
+# Main
+def main():
+    
+    # Parse command line arguments
+    global safe_mode
+    pos_args = []
+    args = iter(sys.argv[1:])
+    for a in args:
+        if not a.startswith("-"):
+            pos_args.append(a)
+            continue
+
+        match a:
+            case "--safe":
+                safe_mode=True
+            case _:
+                print("error: Unsupported flag:", a)
+                print(help_text)
+                exit(1)
+
+    try:
+        zones_pth = Path(pos_args[0])
+        img_pth = Path(pos_args[1])
+        out_pth = Path(pos_args[2])
+    except IndexError:
+        print(help_text)
+        exit(1)
+
+    # Verify output path does not exist, if safe mode
+    if out_pth.exists() and safe_mode:
+        print("error: Path exists, will not overwrite:", out_pth)
+        exit(2)
+
+    # Verify input paths exist
+    if not zones_pth.exists():
+        print("error: Path not found:", zones_pth)
+        exit(1)
+
+    if not img_pth.exists():
+        print("error: Path not found:", img_pth)
+        exit(1)
+
+    # Create temp dir for intermediate files
+    tmp_dir = Path(tempfile.mkdtemp(dir='.'))
+
+    # Calculate zonal stats and write to destination path
+    bands = len_tif_bands(img_pth)
+    bands = range(1, bands+1)
+
+    jobs = [
+        {
+            'zones_pth' : zones_pth,
+            'img_pth'   : img_pth,
+            'out_pth'   : tmp_dir/f"{b}.csv",
+            'band_id'   : b,
+        } for b in bands
+    ]
+    results = dispatch(  # Process tasks in parallel (concurrently)
+        worker = qgis_zonal_stats,
+        tasks = jobs,
+    )
+    for _ in results: pass  # Wait for jobs to finish
+
+    # Assemble intermediate output files and original zones file into singular
+    # gpkg
+    print("Combining results into one output file...")
+    gdf = gpd.read_file(zones_pth)
+    for b in bands:
+        band_stats = pd.read_csv(tmp_dir/f"{b}.csv")
+
+        # Get list of columns that are in band_stats, but not already in gdf
+        cols = list(band_stats.columns.difference(gdf.columns))
+
+        # Join the band's zonal stats to orignal zones gpkg features
+        for c in cols:
+            if c == 'fid':
+                continue
+            gdf[c] = band_stats[c]
+
+    # Save joined data to out_pth
+    gdf.to_file(out_pth.as_posix())
+        
+    # Cleanup temp (intermediate files)
+    shutil.rmtree(tmp_dir)
+    
+    
+
+if __name__ == '__main__':
+    main()
+
