@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+# Author: Daniel Rode
+# Created: 01 Nov 2024
+# Updated: -
+
+
+import sys
+from sys import exit
+import rasterio
+import numpy as np
+import seaborn as sns
+
+
+DPI = 300
+BINS = 100
+YLOG = False
+TITLE = "Frequency Histogram"
+HELP_TEXT = "Usage: this.py  SRC_RAST  OUT_PLOT_PNG"
+
+
+# Parse command line arguments
+pos_args = []
+args = iter(sys.argv[1:])
+for a in args:
+  if not a.startswith('-'):
+    pos_args.append(a)
+    continue
+  match a:
+    case '-y' | '--y-axis-log-scale':
+      YLOG = True
+    case '-b' | '--bins':
+      BINS = int(next(args))
+    case '-d' | '--dpi':
+      DPI = int(next(args))
+    case '-t' | '--title':
+      TITLE = next(args)
+    case _:
+      print("error: Invalid flag", a)
+      exit(1)
+try:
+  IN_PATH, OUT_PATH = pos_args
+except ValueError:
+  print(HELP_TEXT)
+  exit(1)
+
+
+# Get values to plot from raster
+with rasterio.open(IN_PATH, "r") as f:
+    nums = f.read()
+nums = nums[0]  # Choose first layer
+nums = nums[~np.isnan(nums)]  # Drop NA
+
+# Plot and save histograms
+plt = sns.histplot(data=nums, bins=BINS, legend=False)
+plt.set_title(TITLE)
+if YLOG:
+  plt.axes.set_yscale('log')
+plt.get_figure().savefig(OUT_PATH, bbox_inches='tight', dpi=DPI)
