@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+# Author: Daniel Rode
+# Created: 02 Nov 2024
+# Updated: -
+
+
+import sys
+from sys import exit
+import pyogrio
+
+
+HELP_TEXT = "Usage: this.py IN_FGB_PATH"
+
+
+# Parse command line arguments
+args = sys.argv[1:]
+try:
+  IN_PATH = args[0]
+except IndexError:
+  print(HELP_TEXT)
+  exit(1)
+
+# Main
+try:
+  pyogrio.read_dataframe(IN_PATH).to_csv(sys.stdout)
+except BrokenPipeError:
+  exit(0)
