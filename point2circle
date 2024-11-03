@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+# Created: 02 Nov 2024
+# Updated: -
+
+
+import sys
+from sys import exit
+from pathlib import Path
+
+import shapely
+import pyogrio
+import geopandas as gpd
+
+
+HELP_TEXT = "Usage: this.py  X  Y  EPSG  RADIUS  OUT_FGB_PATH"
+
+
+# Parse command line arguments
+args = sys.argv[1:]
+try:
+  X = float(args[0])
+  Y = float(args[1])
+  EPSG = int(args[2])
+  RAD = int(args[3])
+  OUT_PATH = Path(args[4])
+except IndexError:
+  print(HELP_TEXT)
+  exit(1)
+
+# Buffer the point (so is besomes a circle polygon)
+point = shapely.Point(X, Y)
+circle = point.buffer(RAD)
+
+# Save to file
+df = gpd.GeoDataFrame(crs=f"epsg:{EPSG}", geometry=[circle])
+pyogrio.write_dataframe(df, OUT_PATH)

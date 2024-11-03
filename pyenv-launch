@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Author: Daniel Rode
+# Dependencies:
+#   bash 4+
+# Created: 02 Nov 2024
+# Updated: -
+
+
+# Create environment
+# python3 -m venv .venv
+
+
+# Main
+. "$(dirname "$0")/.venv/bin/activate"
+python3 "$@"
