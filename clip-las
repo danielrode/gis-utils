@@ -4,7 +4,7 @@
 #   sf
 #   lidR
 # Created: 30 Sep 2024
-# Updated: -
+# Updated: 04 Nov 2024
 
 
 # Description: Clip a given LiDAR file to a polygon.
@@ -17,7 +17,7 @@ library(sf, warn.conflicts = FALSE)
 # Parse command line arguments
 args = commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) {
-  print("Usage: Rscript clip-lidar.R  LAS  GEOM  OUTPUT")
+  print("Usage: clip-las  LAS  GEOM  OUTPUT")
   quit(status = 1)
 }
 ctg_path = args[1]
