@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Author: Daniel Rode
+# Created: 04 Nov 2024
+# Updated: -
+
+
+. "$(dirname "$0")/.venv/bin/activate"
+exec nu
