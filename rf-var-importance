@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+# Created: 23 Oct 2024
+# Updated: 24 Oct 2024
+
+
+# Description: Use random forest model to find feature importance.
+
+
+import sys
+from sys import exit
+from pathlib import Path
+
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.inspection import permutation_importance
+from sklearn.decomposition import PCA
+from sklearn import preprocessing
+
+
+HELP_TEXT = "Usage: this.py  DATA_CSV  OUT_PNG  Y  X..."
+
+
+# Functions
+def pd_dtype_is_str(col):
+  return pd.api.types.is_string_dtype(col)
+
+
+# Parse command line arguments
+args = sys.argv[1:]
+try:
+  data_csv_path = Path(args[0])
+  out_plot_path = Path(args[1])
+  y_col = args[2]  # Dependent variable
+  x_cols = args[4:]  # (Potential) predictor variables
+except IndexError:
+  print(HELP_TEXT)
+  exit(1)
+
+if len(x_cols) == 0:
+  print(HELP_TEXT)
+  exit(1)
+
+# Import, format, and shape data
+df = pd.read_csv(data_csv_path)
+for c in df.columns:
+  if pd_dtype_is_str(df[c].dtype):
+    # Represent string (categorical) variable values with integers
+    df[c] = pd.Categorical(df[c]).codes
+
+# Run PCA on predictor data for good mutations and print results
+dfx_good_norm = pd.DataFrame(  # Normalize good mutation predictor data
+  preprocessing.scale(df[df['good'] == 1][x_cols]), columns=x_cols,
+)
+pca = PCA(n_components=2)
+pca.fit_transform(dfx_good_norm)
+corr = pd.DataFrame(
+  pca.components_,
+  columns=dfx_good_norm.columns,
+  index=["PC1","PC2"],
+).transpose()
+print(corr)
+
+# Print correlation matrix for predictor (X) variables for good mutations
+print(dfx_good_norm.corr().abs())
+
+# Train random forest classifier
+forest = RandomForestClassifier()
+forest.fit(df[x_cols], df[y_col])
+
+# Find feature (predictor variable) importance
+result = permutation_importance(
+    forest, df[x_cols], df[y_col], n_repeats=10, random_state=42, n_jobs=2
+)
+forest_importances = pd.Series(
+  result.importances_mean, index=x_cols
+).sort_values(ascending=False)
+
+# Plot feature importance
+fig, ax = plt.subplots()
+forest_importances.plot.bar(yerr=result.importances_std, ax=ax)
+ax.set_title("Feature Importances (using permutation on full model)")
+ax.set_ylabel("Mean accuracy decrease")
+fig.tight_layout()
+plt.savefig(out_plot_path)
+
+
+
+# There are some drawbacks to the permutation feature importance method:
+# https://christophm.github.io/interpretable-ml-book/feature-importance.html
+# - Mainly, the importance of highly correlated variables will be distributed
+#   across them (for example, if v1 has an importance of 10 when considered
+#   without v2, and v2 has an importance of 9 when considered without v1, but
+#   v1 and v2 are highly correlated, when considered together they would each
+#   likely be given an importance score of around 4.75).
+# https://scikit-learn.org/1.5/modules/permutation_importance.html
+# - "Permutation importance does not reflect to the intrinsic predictive value
+#    of a feature by itself but how important this feature is for a particular
+#    model."
