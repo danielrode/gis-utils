@@ -5,17 +5,17 @@
 #   gdal
 #   column (Linux command)
 # Created: 28 Sep 2023
-# Updated: 20 Dec 2023
+# Updated: 04 Nov 2024
 
 
-# sudo apt install python3-gdal
-
-
-import subprocess as sp
 import sys
 from sys import exit
 
-from osgeo import ogr
+import pyogrio
+import subprocess as sp
+
+
+HELP_TEXT = "Usage: lscols GPKG"
 
 
 # Functions
@@ -23,21 +23,15 @@ def column_print(text):
     sp.run(['column'], input=text, text=True)
 
 
-# Main
-spat_dat_pth_list = sys.argv[1:]  # List of spatial data file paths
-for spat_dat_pth in spat_dat_pth_list:
-    drivers = ('ESRI Shapefile', 'GPKG')
-    for d in drivers:
-        spat_dat = ogr.GetDriverByName(d).Open(spat_dat_pth, 0)
-        if spat_dat:
-            break
+# Parse command line arguments
+args = sys.argv[1:]
+try:
+    IN_PATH = args[0]
+except IndexError:
+    print(HELP_TEXT)
+    exit(1)
 
-    for layer in spat_dat:
-        print(f"{spat_dat_pth}//{layer.GetName()}:")
-        ldef = layer.GetLayerDefn()
-        field_names = []
-        for i in range(ldef.GetFieldCount()):
-            field_names.append(ldef.GetFieldDefn(i).GetName())
-
-        column_print("\n".join(field_names))
-
+# Find and print field names from spatial data set
+info = pyogrio.read_info(IN_PATH)
+for f in info["fields"]:
+    print(f)
