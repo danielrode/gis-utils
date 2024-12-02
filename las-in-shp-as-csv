@@ -100,3 +100,7 @@ try:
     df.to_csv(sys.stdout)
 except BrokenPipeError:
     pass
+
+
+# TODO
+# - this tool assumes shp and las are in the same CRS
