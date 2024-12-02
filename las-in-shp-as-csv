@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+# Author: Daniel Rode
+# Created: 02 Dec 2024
+# Updated: -
+
+
+import sys
+from sys import exit
+
+import json
+import numpy
+import pandas
+import pdal
+import pyogrio
+import pyproj
+
+
+HELP_TEXT = "Usage: this.py  SHP_PATH  LAS_PATH"
+LAT_LON_CRS = "EPSG:4326"
+
+
+def print2(*args, **kwargs):
+    print(*args, **kwargs, file=sys.stderr)
+
+def xy_to_lonlat(x, y, src_crs):
+    # Convert x y coordinates to latitude/longitude
+    # Longitude: horizontal (analogous to x)
+    # Latitude: vertical (analogous to y)
+    transformer = pyproj.Transformer.from_crs(src_crs, LAT_LON_CRS)
+    lat, lon = transformer.transform(x, y)
+
+    return lon, lat
+
+def points_in_poly(poly, poly_crs, las_path):
+    # Get bounding box of polygon
+    minx, miny, maxx, maxy = poly.bounds
+
+    # Get bounding box of polygon as lat long
+    utm13n_to_lonlat = lambda x, y: xy_to_lonlat(x, y, poly_crs)
+    min_lon, min_lat = utm13n_to_lonlat(minx, miny)
+    max_lon, max_lat = utm13n_to_lonlat(maxx, maxy)
+
+    # Define PDAL pipeline and run it
+    pdal_pipeline_json = [
+        # Import point cloud data within polygon bounds
+        {
+            "type": "readers.stac",
+            "filename": vpc_path,
+            "bounds": {
+                "minx": min_lon,
+                "maxx": max_lon,
+                "miny": min_lat,
+                "maxy": max_lat,
+            },
+            "reader_args": [{
+                "type": "readers.copc",
+                "bounds": {
+                    "minx": minx,
+                    "maxx": maxx,
+                    "miny": miny,
+                    "maxy": maxy,
+                },
+            }],
+        },
+        {
+            "type": "filters.crop",
+            "polygon": str(poly),
+        },
+    ]
+    pdal_pipeline = pdal.Pipeline(json.dumps(pdal_pipeline_json))
+    pdal_pipeline.execute()
+
+    # Return LiDAR points returned by PDAL
+    # TODO figure out under what circumstances PDAL would return more than
+    # one array
+    return pdal_pipeline.arrays[0]
+
+def points_in_shp(gdf, las_path):
+    points_arrays = [
+        points_in_poly(poly, gdf.crs, las_path) for poly in gdf.geometry
+    ]
+    return pandas.DataFrame(numpy.concatenate(points_arrays, axis=None))
+
+
+# Parse command line arguments
+args = sys.argv[1:]
+try:
+    shp_path, vpc_path = args
+except ValueError:
+    print2(HELP_TEXT)
+    exit(1)
+
+# Get LiDAR points that fall within the given shape boundaries and put those
+# points into a dataframe
+shp = pyogrio.read_dataframe(shp_path)
+df = points_in_shp(shp, vpc_path)
+
+# Output data frame as csv
+try:
+    df.to_csv(sys.stdout)
+except BrokenPipeError:
+    pass
