@@ -29,6 +29,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 
 # Import external libraries
+import shapely
 import pyogrio
 from geopandas import GeoDataFrame
 from pathos.pools import ProcessPool
@@ -220,6 +221,13 @@ def rds2vpc(rds_path: Path, out_path: Path) -> None:
 
     # Build VPC
     build_vpc(paths, out_path)
+
+def wkt2gdf(wkt: str, crs: str) -> GeoDataFrame:
+    """Create a GeoDataFrame from a WKT polygon string."""
+    polygon = shapely.from_wkt(wkt)
+    gdf = GeoDataFrame(geometry=[polygon], crs=crs)
+
+    return gdf
 
 
 # Main
