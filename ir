@@ -5,7 +5,7 @@
 #   r 4.4
 #   gdb
 # Created: 08 Oct 2024
-# Updated: -
+# Updated: 29 Jan 2025
 
 
 # Usage: this.sh path/to/script.r scriptArg...
@@ -31,6 +31,8 @@ library(utils)
 
 args = commandArgs(trailingOnly = TRUE)
 commandArgs = function(...) args[2:length(args)]
+
+quit = stop  # Prevent `quit` from exiting interactive shell
 
 script = function() { source(args[1]); }
 # debug(script)
