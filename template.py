@@ -19,16 +19,22 @@ import os
 import sys
 import logging
 import datetime
+import functools
 import subprocess as sp
 from sys import exit
 from pathlib as import Path
 from typing import Optional
 from tempfile import NamedTemporaryFile
 from tempfile import TemporaryDirectory
-from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import as_completed as cf_as_completed
+
+from typing import Any
+from collections.abc import Callable
+from collections.abc import Iterator
 
 # Import external libraries
+import dill
 import shapely
 import pyogrio
 from geopandas import GeoDataFrame
@@ -134,6 +140,29 @@ def papply_native(
         results = [f.result() for f in futures]
 
     return results
+
+def run_dill(fn: Callable, *args, **kwargs) -> Any:
+    """
+    Helper function to use dill instead of pickle so multiprocessing can
+    accept lambda functions.
+    """
+    return dill.loads(fn)(*args, **kwargs)
+
+def dispatch(
+    jobs: iter, worker: Callable, max_workers=MAX_WORKERS,
+) -> Iterator[(Any, Any)]:
+    """
+    Parallel apply dispatching function: Run a list of jobs with a given
+    worker function, in parallel, and yield worker results in order they
+    finish.
+    """
+    futures = []
+    worker = functools.partial(run_dill, dill.dumps(worker))  # Allow lambdas
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures_jobs = {executor.submit(worker, j): j for j in jobs}
+        for f in cf_as_completed(futures_jobs):
+            log.info("Worker finished:", futures_jobs[f])
+            yield (futures_jobs[f], f.result())
 
 def cmd_pipe(cmds, stdin=None) -> None:
     """
