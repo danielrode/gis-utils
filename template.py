@@ -209,33 +209,20 @@ def gdal_build_vrt(src_paths: list[Path], dst_pth: Path) -> None:
 
 def build_vpc(in_paths: list[Path], out_path: Path) -> None:
     """Create virtual mosaic from a list of point cloud files."""
-    with TemporaryDirectory() as tmp_dir:
-        tmp_dir = Path(tmp_dir)
-
-        # Create pipe to pass file list to PDAL
-        fifo = tmp_dir / 'list.pipe'
-        os.mkfifo(fifo)
+    with tempfile.NamedTemporaryFile() as tmp:
+        # Save list of file paths to temp file to pass to PDAL Wrench
+        for i in in_paths:
+            tmp.write(bytes(f"{i}\n", 'utf8'))
+        tmp.flush()
 
         # Run PDAL Wrench to build VPC
-        print("Running PDAL Wrench...")
+        log.info("Running PDAL Wrench...")
         cmd = (
             'pdal_wrench', 'build_vpc',
-            '--input-file-list', fifo,
+            '--input-file-list', tmp.name,
             '--output', out_path,
         )
-        proc = sp.Popen(cmd)
-
-        # Write file list to pipe
-        with open(fifo, 'w') as f:
-            for pth in in_paths:
-                f.write(str(pth))
-                f.write('\n')
-
-        proc.wait()
-
-        # Make sure command succeeded
-        if proc.returncode != 0:
-            raise Exception("pdal_wrench failed with code", proc.returncode)
+        sp.run(cmd, check=True)
 
 def rds2vpc(rds_path: Path, out_path: Path) -> None:
     """
