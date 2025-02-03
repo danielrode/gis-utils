@@ -22,14 +22,14 @@ import datetime
 import functools
 import subprocess as sp
 from sys import exit
-from pathlib as import Path
-from typing import Optional
+from pathlib import Path
 from tempfile import NamedTemporaryFile
 from tempfile import TemporaryDirectory
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures import as_completed as cf_as_completed
 
 from typing import Any
+from typing import Optional
 from collections.abc import Callable
 from collections.abc import Iterator
 
@@ -51,8 +51,20 @@ rpy2_logger.setLevel(logging.ERROR)  # Suppress R warning messages
 # Constants
 EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
 HELP_TEXT = f"Usage: {EXE_NAME} [OPTION]... ARG"
+
 HOME = Path.home()
+OUT_DIR = Path("./export")
+
 MAX_WORKERS = os.cpu_count()
+
+REPO_PATH = "PATH/TO/GIT/REPO"
+REPO_COMMIT = "GIT_COMMIT_HASH"
+DEPENDENCIES_FROM_REPO = (
+    # These paths are relative to the repo path
+    "PATH/TO/REPO/FILE1",
+    "PATH/TO/REPO/FILE2",
+    # ...
+)
 
 
 # Functions
@@ -69,12 +81,12 @@ def timestamp() -> str:
     """Return current date and time as string."""
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-def lsdir(dir: Path) -> Iterator[Path]:
+def lsdir(d: Path) -> Iterator[Path]:
     """
     Return a iterable list of paths for the given directory, skipping hidden
     files.
     """
-    for i in dir.iterdir():
+    for i in d.iterdir():
         if not i.name.startswith("."):
             yield i
 
@@ -90,24 +102,32 @@ def get_path_stem(path: Path) -> str:
             return str(path_stem)
         path = path_stem
 
-def get_logger(path: Path = None, level = logging.INFO) -> logging.Logger:
+def init_logger(
+    path: Path = None, level = logging.INFO, capture_exceptions = True,
+) -> logging.Logger:
     """Initialize logger, set format, and set verbosity level."""
     fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    log = logging.getLogger()
-    log.setLevel(level)
+    logger = logging.getLogger()
+    logger.setLevel(level)
 
     # Set logger to output to stderr
     console = logging.StreamHandler()
     console.setFormatter(fmt)
-    log.addHandler(console)
+    logger.addHandler(console)
 
     # Set logger to output to a file as well
     if path:
         file = logging.FileHandler(path, mode='a')
         file.setFormatter(fmt)
-        log.addHandler(file)
+        logger.addHandler(file)
 
-    return log
+    # Capture unhandled exceptions
+    if capture_exceptions:
+        sys.excepthook = lambda e_type, e_val, e_traceback: logger.critical(
+            "Program terminating:", exc_info=(e_type, e_val, e_traceback)
+        )
+
+    return logger
 
 def papply(jobs: iter, worker: Callable, max_workers=MAX_WORKERS) -> list:
     """
@@ -118,7 +138,7 @@ def papply(jobs: iter, worker: Callable, max_workers=MAX_WORKERS) -> list:
     # Run workers in parallel
     with ProcessPool(ncpus=max_workers) as executor:
         try:
-            results = executor.map(fn, jobs)
+            results = executor.map(worker, jobs)
         except Exception as e:
             # If Python is sent a kill signal, kill all the workers too
             executor.terminate()
@@ -156,12 +176,11 @@ def dispatch(
     worker function, in parallel, and yield worker results in order they
     finish.
     """
-    futures = []
     worker = functools.partial(run_dill, dill.dumps(worker))  # Allow lambdas
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures_jobs = {executor.submit(worker, j): j for j in jobs}
         for f in cf_as_completed(futures_jobs):
-            log.info("Worker finished:", futures_jobs[f])
+            log.info(f"Worker finished: {futures_jobs[f]}")
             yield (futures_jobs[f], f.result())
 
 def cmd_pipe(cmds, stdin=None) -> None:
@@ -171,7 +190,7 @@ def cmd_pipe(cmds, stdin=None) -> None:
     """
     # Chain stdin and stdout of given commands together
     proc_list = []
-    last_stdout = None
+    last_stdout = stdin
     for c in cmds:
         p = sp.Popen(c, stdin=last_stdout, stdout=sp.PIPE)
         proc_list.append(p)
@@ -195,6 +214,29 @@ def cmd_pipe(cmds, stdin=None) -> None:
 
     # return stdout, stderr
 
+def import_scripts(
+    repo_path: Path, repo_commit: str, repo_assets: list[Path], dst_dir: Path,
+) -> None:
+    """Use git to copy dependency scripts to another directory."""
+    log.info(f"Git repo path: {repo_path}")
+    log.info(f"Git repo commit: {repo_commit}")
+
+    dst_dir.mkdir(parents=True, exist_ok=True)
+
+    git_cmd = ('git',
+        '-C', repo_path,
+        'archive',
+            '--format', 'tar',
+            repo_commit,
+            *repo_assets,
+    )
+    tar_cmd = ('tar',
+        '--directory', str(dst_dir),
+        '--file', '-',
+        '--extract',
+    )
+    cmd_pipe([git_cmd, tar_cmd])
+
 def gdal_build_vrt(src_paths: list[Path], dst_pth: Path) -> None:
     """Create virtual mosaic from a list of rasters."""
     with NamedTemporaryFile(suffix='.txt', buffering=0) as f:
@@ -209,7 +251,7 @@ def gdal_build_vrt(src_paths: list[Path], dst_pth: Path) -> None:
 
 def build_vpc(in_paths: list[Path], out_path: Path) -> None:
     """Create virtual mosaic from a list of point cloud files."""
-    with tempfile.NamedTemporaryFile() as tmp:
+    with NamedTemporaryFile() as tmp:
         # Save list of file paths to temp file to pass to PDAL Wrench
         for i in in_paths:
             tmp.write(bytes(f"{i}\n", 'utf8'))
@@ -253,18 +295,23 @@ def main() -> None:
 
     # Setup logging
     global log
-    log = get_logger()
-    # Setup logging: Capture unhandled exceptions
-    sys.excepthook = lambda e_type, e_val, e_traceback: log.critical(
-        "Program terminating:", exc_info=(e_type, e_val, e_traceback)
-    )
+    log = init_logger("./main.log")
 
     # Parse arguments
-    # *example code
     args = iter(sys.argv[1:])
     for i in args:
         if i in ['-p', '--path']:
             path = next(args)
+
+    # Print start time
+    log.info("Starting...")
+
+    # Import dependency scripts
+    log.info("Importing scripts...")
+    scripts_dir = Path("./import/code")
+    import_scripts(
+        REPO_PATH, REPO_COMMIT, DEPENDENCIES_FROM_REPO, scripts_dir,
+    )
 
     # Read content from file if path is provided, otherwise, read from stdin
     try:
@@ -275,8 +322,11 @@ def main() -> None:
         with open(path, 'r') as f:
             file_content = f.read()
 
-    # Print start time
-    log.info("Starting...")
+    # Ensure product output directory exists
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # MAIN CODE
+    log.info("DOING SOMETHING...")
 
     # Print end time
     log.info("Finished")
