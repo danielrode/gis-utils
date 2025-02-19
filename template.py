@@ -298,10 +298,26 @@ def main() -> None:
     log = init_logger("./main.log")
 
     # Parse arguments
+    pos_args = []
     args = iter(sys.argv[1:])
-    for i in args:
-        if i in ['-p', '--path']:
-            path = next(args)
+    for a in args:
+        if not a.startswith('-'):
+            pos_args += a
+            continue
+        match i:
+            case '-p' | '--path':
+                path = next(args)
+            case '-d' | '--do':
+                do_the_thing = True
+            case _:
+                print("error: Invalid flag", a)
+                exit(1)
+
+    try:
+        main_arg1, main_arg2 = pos_args
+    except ValueError:
+        print(HELP_TEXT)
+        exit(1)
 
     # Print start time
     log.info("Starting...")
