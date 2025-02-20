@@ -302,7 +302,7 @@ def main() -> None:
     args = iter(sys.argv[1:])
     for a in args:
         if not a.startswith('-'):
-            pos_args += a
+            pos_args += [a]
             continue
         match i:
             case '-p' | '--path':
