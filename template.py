@@ -297,7 +297,7 @@ def main() -> None:
     global log
     log = init_logger("./main.log")
 
-    # Parse arguments
+    # Parse command line arguments
     pos_args = []
     args = iter(sys.argv[1:])
     for a in args:
