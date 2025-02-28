@@ -297,21 +297,28 @@ def main() -> None:
     global log
     log = init_logger("./main.log")
 
-    # Parse arguments
+    # Parse command line arguments
     pos_args = []
     args = iter(sys.argv[1:])
     for a in args:
         if not a.startswith('-'):
-            pos_args += a
-            continue
-        match i:
-            case '-p' | '--path':
-                path = next(args)
-            case '-d' | '--do':
-                do_the_thing = True
-            case _:
-                print("error: Invalid flag", a)
-                exit(1)
+            pos_args += [a] + list(args)
+            break
+        try:
+            match a:
+                case '-p' | '--path':
+                    path = next(args)
+                case '-d' | '--do':
+                    do_the_thing = True
+                case _:
+                    print("error: Invalid flag", a)
+                    exit(1)
+        except StopIteration:
+            print2("error: Flag requires value:", a)
+            exit(1)
+        except ValueError:
+            print2("error: Invalid value for flag:", a)
+            exit(1)
 
     try:
         main_arg1, main_arg2 = pos_args
