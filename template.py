@@ -311,7 +311,7 @@ def main() -> None:
                 case '-d' | '--do':
                     do_the_thing = True
                 case _:
-                    print("error: Invalid flag", a)
+                    print2("error: Invalid flag", a)
                     exit(1)
         except StopIteration:
             print2("error: Flag requires value:", a)
@@ -321,10 +321,16 @@ def main() -> None:
             exit(1)
 
     try:
-        main_arg1, main_arg2 = pos_args
-    except ValueError:
-        print(HELP_TEXT)
+        main_arg1 = Path(pos_args[0])
+        main_arg2 = Path(pos_args[1])
+    except IndexError:
+        print2(HELP_TEXT)
         exit(1)
+
+    for p in (main_arg1, main_arg2):
+        if not p.exists():
+            print2("error: Path does not exist:", p)
+            exit(1)
 
     # Print start time
     log.info("Starting...")
