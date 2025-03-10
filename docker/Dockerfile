@@ -2,7 +2,7 @@
 # Dependencies:
 #   podman 5.1.2
 # Created: 24 Oct 2024
-# Updated: 24 Oct 2024
+# Updated: 10 Mar 2025
 
 
 # https://docs.docker.com/reference/dockerfile/
@@ -13,7 +13,7 @@ LABEL Version="2"
 
 
 # Set base image
-FROM rocker/geospatial:4.4.1
+FROM docker.io/rocker/geospatial:4.4.1
 
 # Build and install software/dependencies
 RUN Rscript - <<'EOF'
