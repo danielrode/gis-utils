@@ -13,11 +13,12 @@ from sys import exit
 from pathlib import Path
 
 import pyogrio
-import rasterio
-import rasterio.mask
+import rasterio as rio
+from rasterio.mask import mask
 
 
-HELP_TEXT = "Usage: clip-rast  RAST_PATH  SHP_PATH  OUT_RAST_PATH"
+EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
+HELP_TEXT = f"Usage: {EXE_NAME}  TIF_PATH  SHP_PATH  OUT_RAST_PATH"
 
 
 # Parse command line arguments
@@ -34,18 +35,17 @@ except IndexError:
 gdf = pyogrio.read_dataframe(shape_path)
 
 # Import region of raster data within polygons
-with rasterio.open(rast_path) as f:
-    rast, rast_transform = rasterio.mask.mask(
-      f, shapes.to_crs(f.crs)['geometry'], crop=True
+with rio.open(rast_path) as f:
+    rast, rast_transform = mask(
+        f, gdf.to_crs(f.crs)['geometry'], crop=True,
     )
     rast_meta = f.meta
 
 # Save clipped raster to file
-rast_meta.update({
-    "driver": "GTiff",
-    "height": rast.shape[1],
-    "width": rast.shape[2],
-    "transform": rast_transform,
-})
-with rasterio.open(out_path, "w", **rast_meta) as f:
+_, h, w = rast.shape
+rast_meta["driver"] = "GTiff"
+rast_meta["transform"] = rast_transform
+rast_meta["height"] = h
+rast_meta["width"] = w
+with rio.open(out_path, "w", **rast_meta) as f:
     f.write(rast)

@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+
+
+# Description: Substitute raster pixel values.
+ 
+
+# Import standard libraries
+import sys
+import subprocess as sp
+from sys import exit
+from pathlib import Path
+
+# Import in-house libraries
+from vogeler.stdlib import print2
+from vogeler.stdlib import init_logger
+
+# Import external libraries
+import pyogrio
+import numpy as np
+import rasterio as rio
+from rasterio.mask import mask as rio_mask
+
+
+# Constants
+EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
+HELP_TEXT = f"""Usage: {EXE_NAME}  MATCH_VALUE  REPLACEMENT_VALUE  SRC_TIF_PATH
+  OUT_TIF_PATH"""
+
+
+# Main
+def main() -> None:
+    # Parse command line arguments
+    args = sys.argv[1:]
+    try:
+        match_value = args[0]
+        replacement_value = args[1]
+        src_tif_path = Path(args[2])
+        dst_tif_path = Path(args[3])
+    except IndexError:
+        print2(HELP_TEXT)
+        exit(1)
+
+    if match_value.lower() == 'nan':
+        match_value = np.nan
+    else:
+        match_value = float(match_value)
+    if replacement_value.lower() == 'nan':
+        replacement_value = np.nan
+    else:
+        replacement_value = float(replacement_value)
+
+    for p in (src_tif_path,):
+        if not p.exists():
+            print2("error: Path does not exist: ", p)
+            exit(1)
+
+    # Setup logging
+    global log
+    log = init_logger()
+
+    # Set NA pixels that fall inside the boundary to 0
+    with rio.open(src_tif_path, 'r') as src_tif:
+        # Load source raster
+        log.info("Loading source TIFF...")
+        arr = src_tif.read()
+
+        # Set all raster NA values to zero
+        log.info("Substituting pixel values...")
+        if match_value is np.nan:
+            sel = np.isnan(arr)
+        else:
+            sel = (arr == match_value)
+        arr[sel] = replacement_value
+
+        # Save new raster to file
+        with rio.open(dst_tif_path, 'w', **src_tif.profile) as dst:
+            dst.write(arr)
+
+    log.info("Finished")
+
+if __name__ == '__main__':
+    main()
