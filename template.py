@@ -301,7 +301,7 @@ def main() -> None:
     pos_args = []
     args = iter(sys.argv[1:])
     for a in args:
-        if not a.startswith('-'):
+        if (not a.startswith('-')) or (a == '--'):
             pos_args += [a] + list(args)
             break
         try:
