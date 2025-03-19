@@ -10,6 +10,7 @@ CON_CMD=(
         --adjustment 15
     podman run
         --rm
+        --tty --interactive
         --mount 'type=bind,src=/tmp,dst=/tmp'
         --mount 'type=bind,src=/mnt,dst=/mnt'
         --mount 'type=bind,src=/home,dst=/home'
