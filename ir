@@ -1,50 +1,59 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # Author: Daniel Rode
 # Name: Interactive R (R Dubugger)
 # Dependencies:
 #   r 4.4
 #   gdb
 # Created: 08 Oct 2024
-# Updated: 29 Jan 2025
+# Updated: 31 Mar 2025
 
 
-# Usage: this.sh path/to/script.r scriptArg...
+import os
+import sys
+import subprocess as sp
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
-set -e  # Exit on error
-set -m  # Enable job control
+EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
+HELP_TEXT = f"Usage: {EXE_NAME} [ARG]..."
+
 
 # Setup temp dir
-tmpdir="$(mktemp -d)"
-function cleanup { rm -fr -- "$tmpdir"; }
-trap cleanup EXIT
+with TemporaryDirectory() as tmpdir:
+    tmpdir = Path(tmpdir)
 
-# Write R startup code to setup debugging environment
-cat <<EOF > "$tmpdir"/Rprofile
-library(base)
-library(datasets)
-library(grDevices)
-library(graphics)
-library(methods)
-library(stats)
-library(utils)
+    # Write R startup code to setup debugging environment
+    with open(tmpdir/"Rprofile", 'w') as f:
+        f.write("""
+            library(base)
+            library(datasets)
+            library(grDevices)
+            library(graphics)
+            library(methods)
+            library(stats)
+            library(utils)
 
-args = commandArgs(trailingOnly = TRUE)
-commandArgs = function(...) args[2:length(args)]
+            args = commandArgs(trailingOnly = TRUE)
+            commandArgs = function(...) args[2:length(args)]
 
-quit = stop  # Prevent `quit` from exiting interactive shell
+            quit = stop  # Prevent `quit` from exiting interactive shell
 
-script = function() { source(args[1]); }
-# debug(script)
-script()
-EOF
+            if (length(args) > 0) {
+                script = function() { source(args[1]); }
+                # debug(script)
+                script()
+            }
+        """)
 
-# Run R session
-args=(
-  --no-environ --no-site-file --no-restore-data
-  --no-save
-  --interactive
-  --args "$@"
-)
-R_PROFILE_USER="$tmpdir/Rprofile" R "${args[@]}"
-# DEBUGINFOD_URLS= R --vanilla --interactive --debugger gdb --args "$@"
+    # Run R session
+    env = os.environ.copy()
+    env["R_PROFILE_USER"] = str(tmpdir/"Rprofile")
+    cmd = ("R",
+        "--no-environ", "--no-site-file", "--no-restore-data",
+        "--no-save",
+        "--interactive",
+        # "--args", *sys.argv[1:],
+    )
+    sp.run(cmd, env=env)
+    # DEBUGINFOD_URLS= R --vanilla --interactive --debugger gdb --args "$@"
