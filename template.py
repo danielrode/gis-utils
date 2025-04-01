@@ -21,7 +21,6 @@ import logging
 import datetime
 import functools
 import subprocess as sp
-from sys import exit
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from tempfile import TemporaryDirectory
@@ -312,25 +311,25 @@ def main() -> None:
                     do_the_thing = True
                 case _:
                     print2("error: Invalid flag", a)
-                    exit(1)
+                    sys.exit(1)
         except StopIteration:
             print2("error: Flag requires value:", a)
-            exit(1)
+            sys.exit(1)
         except ValueError:
             print2("error: Invalid value for flag:", a)
-            exit(1)
+            sys.exit(1)
 
     try:
         main_arg1 = Path(pos_args[0])
         main_arg2 = Path(pos_args[1])
     except IndexError:
         print2(HELP_TEXT)
-        exit(1)
+        sys.exit(1)
 
     for p in (main_arg1, main_arg2):
         if not p.exists():
             print2("error: Path does not exist:", p)
-            exit(1)
+            sys.exit(1)
 
     # Print start time
     log.info("Starting...")
