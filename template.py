@@ -40,11 +40,19 @@ from geopandas import GeoDataFrame
 from pathos.pools import ProcessPool
 
 # Import R libraries
-from rpy2.robjects.packages import importr
+from rpy2.robjects import r
+from rpy2.robjects.methods import RS4
+from rpy2.robjects.vectors import IntVector
+from rpy2.robjects.packages import importr as rlib
 from rpy2.rinterface_lib.callbacks import logger as rpy2_logger
-rbase = importr("base")
-rmethods = importr("methods")
-rpy2_logger.setLevel(logging.ERROR)  # Suppress R warning messages
+
+rpy2_logger.setLevel(ERROR)  # Suppress R warning messages
+
+rbase = rlib("base")
+rmethods = rlib("methods")
+sf = rlib("sf")
+lidr = rlib("lidR")
+terra = rlib("terra")
 
 
 # Constants
