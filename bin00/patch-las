@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+
+
+"""Classify artifact points in LAS files.
+
+Load set of polygons delineating artifacts for removal (such as
+rocks, buildings, powerlines, etc...). Sift through a directory of point
+cloud files and find ones that overlap with artifact polygons. For each
+point cloud that overlaps, load it, fix points, and save as a new point cloud
+file.
+"""
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Import libraries
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Import standard libraries
+import os
+import sys
+from pathlib import Path
+from logging import ERROR
+from functools import partial
+
+from typing import Literal
+
+# Import external libraries
+import pyogrio
+from geopandas import GeoDataFrame
+
+# Import in-house libraries
+from vogeler.stdlib import print2
+from vogeler.stdlib import dispatch
+from vogeler.stdlib import init_logger
+from vogeler.stdlib import get_path_stem
+from vogeler.extlib import catgdf
+
+# Import R libraries
+from vogeler.r import r
+from vogeler.r import RS4
+from vogeler.r import rlib
+from vogeler.r import rpy2_logger
+from vogeler.r import get_las_crs_wkt
+
+sf = rlib("sf")
+rlas = rlib("rlas")
+lidr = rlib("lidR")
+terra = rlib("terra")
+
+rpy2_logger.setLevel(ERROR)  # Suppress R warning messages
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
+
+# Text printed when user calls this script without proper parameters
+HELP_TEXT = f"""Usage: {EXE_NAME} [OPTION]...  LAS_DIR  LAS_TILES_SHP_PATH
+  DTM_RAST_PATH  ROCKS_SHP_PATH  POWERLINES_SHP_PATH  TOWERS_SHP_PATH
+  BUILDINGS_SHP_PATH  OUT_DIR"""
+
+MAX_WORKERS = os.cpu_count()  # Number of CPU cores available on machine
+
+# Only select rocks for the final rock map if the model is more than 70%
+# confident it is indeed a rock (I chose 70% after scrolling around the BH CHM
+# in QGIS and getting a sense for what confidence level was good for getting
+# rid of most rocks while not considering too many ambiguous polygons to be
+# rocks)
+PRED_CONF_THRESH = 0.7
+
+ROCK_BUFF = 0.5  # Meters to buffer rock polygons by (to avoid slivers)
+
+# These numbers will be used as the classification for LiDAR points that fall
+# within the rock AOI polygons, building polygons, and powerline polygons,
+# respectively
+CUSTOM_LIDAR_CODE_ROCK = 102
+CUSTOM_LIDAR_CODE_BLG = 106
+CUSTOM_LIDAR_CODE_PWR = 115
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def fix_laz_tile(
+    src_laz_path: Path,
+    dtm_path: Path,
+    rock_df: GeoDataFrame,
+    building_df: GeoDataFrame,
+    powerline_df: GeoDataFrame,
+    tower_df: GeoDataFrame,
+    out_dir: Path,
+) -> None | Literal[True] | Exception:
+    """Patch point cloud file (classify noise points).
+
+    Reclassify rock areas (as defined by the polygons in rock_df) as
+    "ground" points, reclassify buildings (as defined by polygons in
+    building_df as "building", and reclassify powerlines (as defined by
+    powerline_df) and communication towers (as defined by tower_df)
+    as "transmission tower", and save as a new LAZ file."
+    """
+
+    # Setup export directory and path (for saving products/outputs to)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(exist_ok=True)
+    out_path = Path(f"{Path(out_dir)}/{get_path_stem(src_laz_path)}.laz")
+    if out_path.exists():
+        # If product already exists, abort
+        return None
+
+    # Import lidar
+    las = lidr.readLAS(str(src_laz_path))
+    las_bounds = sf.st_as_sfc(lidr.st_bbox_LAS(las))
+
+    # Define function to get area of interest polygon
+    def get_aoi(gdf: GeoDataFrame, bounds=las_bounds) -> RS4:
+        aoi = sf.st_as_sfc(list(gdf.geometry.to_wkt()), crs=gdf.crs.to_wkt())
+
+        # Make sure LAS and polygon CRS match
+        las_crs_wkt = get_las_crs_wkt(las)
+        aoi = sf.st_transform(aoi, las_crs_wkt)
+
+        # Remove polygons Z dimension
+        aoi = sf.st_zm(aoi, drop=True, what="ZM")
+
+        # Only keep polygon areas overlapping LAS tile
+        aoi = sf.st_intersection(aoi, bounds)
+
+        # Explode all multipolygons into single polygons
+        # (lidR::classify_poi expects polygons, not multipolygons)
+        # and drop non-polygon geometries (such as points and lines)
+        aoi = sf.st_collection_extract(aoi, "POLYGON")
+        aoi = sf.st_cast(aoi, "POLYGON")
+
+        return aoi
+
+    # Define function to reclassify lidar points within AOI
+    def fix_aoi(las, point_class, aoi, poi) -> RS4:
+        if len(aoi) == 0:
+            # If AOI is empty, there is nothing to fix (so return)
+            return las
+
+        las = lidr.classify_poi(las, point_class, roi=aoi, poi=poi)
+
+        return las
+
+    try:
+        # Normalize lidar height using vendor DTM
+        dtm = terra.crop(terra.rast(str(dtm_path)), las_bounds)
+        las = lidr.normalize_height(las, dtm)
+
+        # Classify last returns above 2 meters that fall within building
+        # polygons as a custom building class. 2.0 meters was chosen
+        # because it is unlikely that the roof of a building would be less
+        # than 2 meters tall. Only last returns were reclassified to ensure
+        # any vegetation returns that may overhang the building were
+        # retained.
+        aoi = get_aoi(building_df)
+        poi = r("~(Z>2.0 & ReturnNumber==NumberOfReturns)")
+        las = fix_aoi(las, CUSTOM_LIDAR_CODE_BLG, aoi, poi)
+
+        # Classify points within powerline polygons that are above 10 meters as
+        # a custom noise class. Above 10 meters was chosen at the vertical
+        # threshold as a compromise between removing powerline artifacts and
+        # preserving vegetation under the powerlines. This compromise was
+        # chosen to favor preserving vegetation at the expense of missing some
+        # powerline artifacts.
+        aoi = get_aoi(powerline_df)
+        las = fix_aoi(las, CUSTOM_LIDAR_CODE_PWR, aoi, r("~Z>10"))
+
+        # Classify points within tower polygons that are above 1 meter as a
+        # custom noise class. Above 1 meter was chosen as the vertical
+        # threshold to preserve short vegetation that may exist under tower
+        # bases. (Any vegetation that exists under towers is likely to be
+        # minimal due to management activities.)
+        aoi = get_aoi(tower_df)
+        las = fix_aoi(las, CUSTOM_LIDAR_CODE_PWR, aoi, r("~Z>1"))
+
+        # Classify points within rock artifact polygons as a custom noise class
+        aoi = get_aoi(rock_df)
+        las = fix_aoi(
+            las, CUSTOM_LIDAR_CODE_ROCK, aoi,
+            r("~(Classification==1)"),
+        )
+
+        # Un-normalize lidar height (a new DTM will need to be created later
+        # now that rock artifacts have been flagged)
+        z = las.do_slot('data')[las.do_slot('data').names.index("Zref")]
+        las.do_slot('data')[las.do_slot("data").names.index("Z")] = z
+        las = lidr.remove_lasattribute(las, "Zref")
+
+        # Saved reclassified LAZ tile
+        lidr.writeLAS(las, str(out_path))
+
+        # Index LAZ file
+        rlas.writelax(str(out_path))
+    except Exception as e:
+        return e
+
+    return True
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def main() -> None:
+    # Parse command line arguments
+    pos_args = []
+    args = iter(sys.argv[1:])
+    for a in args:
+        if (not a.startswith('-')) or (a == '--'):
+            pos_args += [a] + list(args)
+            break
+        try:
+            match a:
+                case '-j' | '--max-workers':
+                    global MAX_WORKERS
+                    MAX_WORKERS = int(next(args))
+                case _:
+                    print2("error: Invalid flag", a)
+                    sys.exit(1)
+        except StopIteration:
+            print2("error: Flag requires value:", a)
+            sys.exit(1)
+        except ValueError:
+            print2("error: Invalid value for flag:", a)
+            sys.exit(1)
+
+    try:
+        las_dir = Path(pos_args[0])
+        las_bounds_shp_path = Path(pos_args[1])
+        dtm_rast_path = Path(pos_args[2])
+        rocks_shp_path = Path(pos_args[3])
+        powerlines_shp_path = Path(pos_args[4])
+        towers_shp_path = Path(pos_args[5])
+        buildings_shp_path = Path(pos_args[6])
+        out_dir = Path(pos_args[7])
+    except IndexError:
+        print2(HELP_TEXT)
+        sys.exit(1)
+
+    for p in (
+        las_dir,
+        las_bounds_shp_path,
+        dtm_rast_path,
+        rocks_shp_path,
+        powerlines_shp_path,
+        towers_shp_path,
+        buildings_shp_path,
+    ):
+        if not p.exists():
+            print2("error: Path does not exist:", p)
+            sys.exit(1)
+
+    # Setup logging
+    global log
+    log = init_logger()
+
+    log.warning(
+        "This script expects point cloud LAS/LAZ tiles, point cloud tile"
+        " boundaries shapefile, and raster DTMs to all have the same CRS."
+    )
+
+    # Import boundaries for point cloud tiles
+    las_tiles = pyogrio.read_dataframe(las_bounds_shp_path)
+
+    # Import rock polygons and only keep polygons that the model is highly
+    # confident are rocks
+    log.info("Importing rock features...")
+    rock_aoi = pyogrio.read_dataframe(rocks_shp_path).to_crs(las_tiles.crs)
+    sel = rock_aoi['pred_proba'] > PRED_CONF_THRESH
+    rock_aoi = rock_aoi[sel]
+
+    # Buffer rock polygons and then remove overlap
+    log.info("Buffering and dissolving rock polygons...")
+    rock_aoi = rock_aoi.buffer(ROCK_BUFF)  # Consume slivers
+    rock_aoi = GeoDataFrame(
+        data=[], geometry=[rock_aoi.union_all()], crs=rock_aoi.crs
+    ).explode(ignore_index=True)
+
+    # Import polygon of powerline areas that need to be fixed
+    log.info("Importing powerline features...")
+    powerline_aoi = (
+        pyogrio
+        .read_dataframe(powerlines_shp_path)
+        .to_crs(las_tiles.crs)
+    )
+
+    # Import polygons of communication tower areas that need to be fixed
+    log.info("Importing communication tower features...")
+    tower_aoi = pyogrio.read_dataframe(towers_shp_path).to_crs(las_tiles.crs)
+
+    # Import polygons of building areas that need to be fixed
+    log.info("Importing building features...")
+    building_aoi = (
+        pyogrio
+        .read_dataframe(buildings_shp_path)
+        .to_crs(las_tiles.crs)
+    )
+
+    # Get list of paths to LiDAR tiles that intersect with AOI polygons
+    # (and thus need point reclassification to fix the BH ground model)
+    log.info("Building list of LAZ tiles that need fixed...")
+    tiles2fix = set(las_tiles.sjoin(
+        catgdf([rock_aoi, powerline_aoi, tower_aoi, building_aoi]),
+        how='inner',
+        predicate='intersects',
+    )['TILENAME'].str.lower())
+    tiles2fix = [
+        las_dir / (tile_id + "_preliminary.laz")
+        for tile_id in tiles2fix
+    ]
+
+    # Reclassify LiDAR and save to disk
+    log.info("Fixing tiles in parallel...")
+    fn = partial(
+        fix_laz_tile,
+        dtm_path=dtm_rast_path,
+        rock_df=rock_aoi,
+        building_df=building_aoi,
+        powerline_df=powerline_aoi,
+        tower_df=tower_aoi,
+        out_dir=out_dir,
+    )
+    for j, result in dispatch(tiles2fix, fn, max_workers=MAX_WORKERS):
+        if result is None:
+            log.info("Exists (skipping): %s", j)
+        elif result is True:
+            log.info("Job finished: %s", j)
+        else:
+            log.error("Job failed: %s: %s", j, result)
+    log.info("All workers finished")
+
+
+if __name__ == '__main__':
+    main()

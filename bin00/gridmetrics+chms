@@ -1,0 +1,770 @@
+#!/usr/bin/env Rscript
+# Author: Daniel Rode
+
+
+# Generate gridded vegetation metrics and CHMs.
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Import libraries
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Import standard libraries
+library(digest)
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+HELP_TEXT = "Usage: this.R [OPTIONS]  LAS_CATALOG_PATH  OUT_DIR  TILE_BUFFER"
+
+DEFAULT_MAX_THREADS = 1
+
+# This number will be used as the classification for LiDAR points that fall
+# within the rock AOI polygons
+CUSTOM_LIDAR_CODE_ROCK = 102L
+
+LIDAR_POINT_FILTER = paste(
+    "-keep_extended_class 0 1 2 3 4 5 9", as.character(CUSTOM_LIDAR_CODE_ROCK),
+    "-drop_withheld"
+)
+LIDAR_ATTR_FILTER = "xyzirnc"  # See https://rdrr.io/cran/lidR/man/readLAS.html
+GRIDMETRICS_NAME = "gridmet20m"
+GRID_RES = 20  # Grid resolution in meters
+GRID_CELL_AREA = GRID_RES^2  # Size of grid cell in square meters
+
+# LiDAR vegetation height delimiter (cut-off), in the point cloud's CRS units,
+# (which is meters for the Black Hills collection). 1.37 meters is
+# equivalent to 4.5 feet (breast height).
+HIGHPASS_DELIM = 1.3716
+
+# Tallest tree in Black Hills has recorded height of 160 feet (48.8 meters)
+# (Woster, 2013), thus, all points higher than than can be considered noise
+LOWPASS_DELIM = 50  # High noise delimiter (cut-off) for Black Hills area
+GROUND_DELIM = -0.1  # Vendor give LiDAR 10 cm RMSEz Vertical Accuracy Class
+
+# Spatial resolution and name for canopy height model #1
+CHM1_RES = 0.5
+CHM1_NAME = "chm05m"
+
+# Spatial resolution and name for canopy height model #2
+CHM2_RES = 1.0
+CHM2_NAME = "chm1m"
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Startup checks and process user input
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Parse command line arguments
+pos_args = character()
+max_threads = DEFAULT_MAX_THREADS
+debug_save_extents = FALSE
+tile_wkt = ""
+
+args = commandArgs(trailingOnly=TRUE)
+counter = 1
+while (TRUE) {
+    a = args[counter]
+    if (is.na(a) || a == "--") {
+        break
+    } else if (!startsWith(a, "-")) {
+        pos_args = c(pos_args, a)
+    } else if (a == "-b" || a == "--bounds-wkt") {
+        tile_wkt = args[counter + 1]
+        counter = counter + 1
+    } else if (a == "-t" || a == "--max-threads") {
+        max_threads = as.integer(args[counter + 1])
+        counter = counter + 1
+    } else if (a == "--save-extents") {
+        debug_save_extents = TRUE
+    } else {
+        stop("Invalid flag: ", a)
+    }
+    counter = counter + 1
+}
+
+if (length(pos_args) != 3) {
+    cat(HELP_TEXT)
+    quit(status=1)
+}
+ctg_pth = pos_args[1]
+out_dir_parent = pos_args[2]
+tile_buffer = as.numeric(pos_args[3]) |> suppressWarnings()
+
+cat("Args: ")
+dput(args)
+
+if (! file.exists(ctg_pth)) {
+    stop("Path does not exist: ", ctg_pth)
+}
+if (is.na(tile_buffer) |> any()) {
+    err = "Must be numeric TILE_BUFFER"
+    stop(err)
+}
+
+
+# Determine WKT hash and use as output directory
+out_dir = paste0(
+    out_dir_parent, "/", digest(tile_wkt, algo="sha1", serialize=FALSE)
+)
+
+
+# If job was already done, abort
+if (file.exists(paste0(out_dir, "/DONE"))) {
+    cat("Products found (job already completed)")
+    quit(status=0)
+}
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Import libraries (more of them)
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Import external libraries
+library(sf, warn.conflicts=FALSE)
+library(lidR, warn.conflicts=FALSE)  # v. 4.1.2
+library(lasR, warn.conflicts=FALSE)  # v. 0.13.3
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+msg = function(...) {
+    # Print a message and "refresh" the screen so it shows immediately.
+
+    message(...)
+    flush.console()
+}
+
+m2ft = function(num) {
+    # Convert a number from meters to feet
+
+    return(num / 0.3048)
+}
+
+ft2m = function(num) {
+    # Convert a number from feet to meters
+
+    return(num * 0.3048)
+}
+
+match_ext = function(rast, ext_rast) {
+    # Match/set extent of "rast" to that of "ext_rast".
+
+    return(terra::crop(rast, terra::ext(ext_rast), extend=TRUE))
+}
+
+get_grid_metrics = function(las) {
+    # Computer raster/grid metrics for a given point cloud.
+
+    # List of main metrics to calculate using lasR
+    lasr_metrics = c(
+        # Height
+        "z_mean", "z_sd", "z_cv",
+        "z_min", "z_max",
+        "z_skew", "z_kurt",
+        # Percentiles
+        "z_p01", "z_p02", "z_p05",
+        "z_p10", "z_p20",
+        "z_p25",
+        "z_p30", "z_p40", "z_p50", "z_p60", "z_p70",
+        "z_p75",
+        "z_p80", "z_p90",
+        "z_p95", "z_p98", "z_p99",
+
+        # Intensity
+        "i_mean", "i_sd", "i_cv",
+        "i_min", "i_max",
+        # Percentiles
+        "i_p01", "i_p02", "i_p05",
+        "i_p10", "i_p20",
+        "i_p25",
+        "i_p30", "i_p40", "i_p50", "i_p60", "i_p70",
+        "i_p75",
+        "i_p80", "i_p90",
+        "i_p95", "i_p98", "i_p99",
+
+        # Density
+        "count"
+    )
+    get_grid_metrics_lasr = function(las) {
+        # Compute set of gridded metrics using lasR as the backend
+        results = lasR::rasterize(GRID_RES, operators=lasr_metrics) |>
+            lasR::exec(on=las)
+        return(results)
+    }
+
+    # Basic height and intensity metrics for all returns (excluding noise)
+    grid_metrics_all = get_grid_metrics_lasr(las)
+
+    # Basic height and intensity metrics for first returns
+    las_frst = lidR::filter_first(las)  # Select first returns
+    grid_metrics_frst = get_grid_metrics_lasr(las_frst)
+
+    # Make sure extent of this raster matches extent of the "grid_metrics_all"
+    # raster (pad with NAs if necessary)
+    grid_metrics_frst = match_ext(grid_metrics_frst, grid_metrics_all)
+
+    # Basic height and intensity metrics for all returns above given height
+    # threshold
+    las_hp = lidR::filter_poi(
+        las,
+        # Points that pass high-pass filter (ideally, points representing
+        # vegetation)
+        Z >= HIGHPASS_DELIM
+    )
+    grid_metrics_hp = get_grid_metrics_lasr(las_hp)
+
+    # Make sure extent of this raster matches extent of the "grid_metrics_all"
+    # raster (pad with NAs if necessary)
+    grid_metrics_hp = match_ext(grid_metrics_hp, grid_metrics_all)
+
+    # Basic height and intensity metrics for first returns above given height
+    # threshold
+    las_frst_hp = lidR::filter_poi(
+        las_frst,
+        Z >= HIGHPASS_DELIM  # First returns that pass high-pass filter
+    )
+    grid_metrics_frst_hp = get_grid_metrics_lasr(las_frst_hp)
+
+    # Make sure extent of this raster matches extent of the "grid_metrics_all"
+    # raster (pad with NAs if necessary)
+    grid_metrics_frst_hp = match_ext(grid_metrics_frst_hp, grid_metrics_all)
+
+    # Pulse and point density metrics
+    grid_metrics_pul_dn = grid_metrics_frst$count / GRID_CELL_AREA
+    grid_metrics_pnt_dn = grid_metrics_all$count / GRID_CELL_AREA
+
+    # Canopy cover and canopy density metrics
+    grid_metrics_cc = grid_metrics_frst_hp$count / grid_metrics_frst$count
+    grid_metrics_cd = grid_metrics_hp$count / grid_metrics_all$count
+
+    # Set parameters to use when calling lidR pixel_metrics
+    lidr_pixel_metrics = function(las, fn) {
+        return(lidR::pixel_metrics(
+            las,
+            func=fn,
+            start=c(0, 0),  # Set grid origin
+            res=GRID_RES
+        ) |> match_ext(ext_rast=grid_metrics_all))
+    }
+
+    # L-moments metrics for height (Z)
+    grid_metrics_all = grid_metrics_all |> c(lidr_pixel_metrics(
+        las, ~lidRmetrics::metrics_Lmoments(Z, zmin=NA)
+    ))
+    grid_metrics_frst = grid_metrics_frst |> c(lidr_pixel_metrics(
+        las_frst, ~lidRmetrics::metrics_Lmoments(Z, zmin=NA)
+    ))
+    grid_metrics_hp = grid_metrics_hp |> c(lidr_pixel_metrics(
+        las_hp, ~lidRmetrics::metrics_Lmoments(Z, zmin=HIGHPASS_DELIM)
+    ))
+    grid_metrics_frst_hp = grid_metrics_frst_hp |> c(lidr_pixel_metrics(
+        las_frst_hp, ~lidRmetrics::metrics_Lmoments(Z, zmin=HIGHPASS_DELIM)
+    ))
+
+    # Rumple metrics
+    grid_metrics_all$rumple = lidr_pixel_metrics(
+        # NOTE: pixel_size=1 is what is used in lidRmetrics examples on their
+        # GitHub, so that is what I chose.
+        las, ~lidRmetrics::metrics_rumple(X, Y, Z, pixel_size=1)
+    )
+
+    # Kernel density estimation (KDE) metrics
+    grid_metrics_all = grid_metrics_all |>
+        c(lidr_pixel_metrics(las, ~lidRmetrics::metrics_kde(Z)))
+    grid_metrics_frst = grid_metrics_frst |>
+        c(lidr_pixel_metrics(las_frst, ~lidRmetrics::metrics_kde(Z)))
+    grid_metrics_hp = grid_metrics_hp |>
+        c(lidr_pixel_metrics(las_hp, ~lidRmetrics::metrics_kde(Z)))
+    grid_metrics_frst_hp = grid_metrics_frst_hp |>
+        c(lidr_pixel_metrics(las_frst_hp, ~lidRmetrics::metrics_kde(Z)))
+
+    # Strata metrics: proportion of returns between various height cut-offs
+    # Cut-offs were derived partially from Table 4 of Fekety et al. (2018);
+    # several additional strata were added.
+    get_strat = function(las, bot, top, all_rast) {
+        las = lidR::filter_poi(las, Z >= bot & Z < top)
+        if (lidR::is.empty(las)) {
+            # If no results to compute, return empty raster layer
+            empty_layer = terra::rast(
+                terra::ext(all_rast),
+                resolution=terra::res(all_rast),
+                crs=terra::crs(all_rast)
+            )
+            return(empty_layer)
+        }
+        # Get proportion of points within given strata layer
+        strat_rast = lasR::rasterize(GRID_RES, operators="count") |>
+            lasR::exec(on=las)
+        strat_rast = terra::crop(strat_rast, terra::ext(all_rast), extend=TRUE)
+        return(strat_rast / all_rast)
+    }
+    get_strat_list = function(las, all_rast) {
+        return(list(
+            "0005"=get_strat(las, GROUND_DELIM, ft2m(0.5), all_rast),
+            "0010"=get_strat(las, ft2m(0.5),    ft2m(1),   all_rast),
+            "0045"=get_strat(las, ft2m(1),      ft2m(4.5), all_rast),
+            "0100"=get_strat(las, ft2m(4.5),    ft2m(10),  all_rast),
+            "0200"=get_strat(las, ft2m(10),     ft2m(20),  all_rast),
+            "0300"=get_strat(las, ft2m(20),     ft2m(30),  all_rast),
+            "0400"=get_strat(las, ft2m(30),     ft2m(40),  all_rast),
+            "0500"=get_strat(las, ft2m(40),     ft2m(50),  all_rast),
+            "0600"=get_strat(las, ft2m(50),     ft2m(60),  all_rast),
+            "0700"=get_strat(las, ft2m(60),     ft2m(70),  all_rast),
+            "0800"=get_strat(las, ft2m(70),     ft2m(80),  all_rast),
+            "0900"=get_strat(las, ft2m(80),     ft2m(90),  all_rast),
+            "1000"=get_strat(las, ft2m(90),     ft2m(100), all_rast),
+            "1100"=get_strat(las, ft2m(100),    ft2m(110), all_rast),
+            "1200"=get_strat(las, ft2m(110),    ft2m(120), all_rast),
+            "1300"=get_strat(las, ft2m(120),    ft2m(130), all_rast),
+            "1400"=get_strat(las, ft2m(130),    ft2m(140), all_rast),
+            "1500"=get_strat(las, ft2m(140),    ft2m(150), all_rast),
+            "1600"=get_strat(las, ft2m(150),    ft2m(160), all_rast),
+            "1700"=get_strat(las, ft2m(160),    ft2m(170), all_rast)
+        ))
+    }
+    grid_metrics_strat_all = get_strat_list(las, grid_metrics_all$count)
+    grid_metrics_strat_frst = get_strat_list(las_frst, grid_metrics_frst$count)
+
+    # Return metrics as a list of rasters
+    return(list(
+        "all"             = grid_metrics_all,
+        "frst"            = grid_metrics_frst,
+        "hp"              = grid_metrics_hp,
+        "frsthp"          = grid_metrics_frst_hp,
+        "density"         = terra::rast(list(
+            "puldn"           = grid_metrics_pul_dn,
+            "pntdn"           = grid_metrics_pnt_dn,
+            "cc"              = grid_metrics_cc,
+            "cd"              = grid_metrics_cd
+        )),
+        "strat_all"       = terra::rast(list(
+            "0000to0005"      = grid_metrics_strat_all[["0005"]],
+            "0005to0010"      = grid_metrics_strat_all[["0010"]],
+            "0010to0045"      = grid_metrics_strat_all[["0045"]],
+            "0045to0100"      = grid_metrics_strat_all[["0100"]],
+            "0100to0200"      = grid_metrics_strat_all[["0200"]],
+            "0200to0300"      = grid_metrics_strat_all[["0300"]],
+            "0300to0400"      = grid_metrics_strat_all[["0400"]],
+            "0400to0500"      = grid_metrics_strat_all[["0500"]],
+            "0500to0600"      = grid_metrics_strat_all[["0600"]],
+            "0600to0700"      = grid_metrics_strat_all[["0700"]],
+            "0700to0800"      = grid_metrics_strat_all[["0800"]],
+            "0800to0900"      = grid_metrics_strat_all[["0900"]],
+            "0900to1000"      = grid_metrics_strat_all[["1000"]],
+            "1000to1100"      = grid_metrics_strat_all[["1100"]],
+            "1100to1200"      = grid_metrics_strat_all[["1200"]],
+            "1200to1300"      = grid_metrics_strat_all[["1300"]],
+            "1300to1400"      = grid_metrics_strat_all[["1400"]],
+            "1400to1500"      = grid_metrics_strat_all[["1500"]],
+            "1500to1600"      = grid_metrics_strat_all[["1600"]],
+            "1600to1700"      = grid_metrics_strat_all[["1700"]]
+        )),
+        "strat_frst"            = terra::rast(list(
+            "0000to0005"      = grid_metrics_strat_frst[["0005"]],
+            "0005to0010"      = grid_metrics_strat_frst[["0010"]],
+            "0010to0045"      = grid_metrics_strat_frst[["0045"]],
+            "0045to0100"      = grid_metrics_strat_frst[["0100"]],
+            "0100to0200"      = grid_metrics_strat_frst[["0200"]],
+            "0200to0300"      = grid_metrics_strat_frst[["0300"]],
+            "0300to0400"      = grid_metrics_strat_frst[["0400"]],
+            "0400to0500"      = grid_metrics_strat_frst[["0500"]],
+            "0500to0600"      = grid_metrics_strat_frst[["0600"]],
+            "0600to0700"      = grid_metrics_strat_frst[["0700"]],
+            "0700to0800"      = grid_metrics_strat_frst[["0800"]],
+            "0800to0900"      = grid_metrics_strat_frst[["0900"]],
+            "0900to1000"      = grid_metrics_strat_frst[["1000"]],
+            "1000to1100"      = grid_metrics_strat_frst[["1100"]],
+            "1100to1200"      = grid_metrics_strat_frst[["1200"]],
+            "1200to1300"      = grid_metrics_strat_frst[["1300"]],
+            "1300to1400"      = grid_metrics_strat_frst[["1400"]],
+            "1400to1500"      = grid_metrics_strat_frst[["1500"]],
+            "1500to1600"      = grid_metrics_strat_frst[["1600"]],
+            "1600to1700"      = grid_metrics_strat_frst[["1700"]]
+        ))
+    ))
+}
+
+save_cloud_product = function(product, dst_path, bbox) {
+    # Save a point cloud to file.
+
+    if (! endsWith(dst_path, ".laz")) {
+        stop("Path has unsupported file extension: ", dst_path)
+    }
+
+    bbox = sf::st_bbox(bbox)
+
+    # Trim tile buffer off product
+    msg("Cropping product...")
+    start_time = Sys.time()
+    cropped_product = lidR::clip_roi(product, bbox)
+    msg("Cropping product took ", sec_since(start_time), " seconds")
+
+    # Write product to disk
+    message("Writing product to disk: ", dst_path)
+    start_time = Sys.time()
+    tmp_dir = paste0(dirname(dst_path), "/tmp")
+    dir.create(tmp_dir, showWarnings=FALSE, mode="0700")
+    tmp_path = paste0(tmp_dir, "/", basename(dst_path))
+
+    err = lidR::writeLAS(cropped_product, tmp_path, index=TRUE) |> try()
+    if (class(err) == "try-error") {
+        if (err == "Error : Cannot write a file with 0 point\n") {
+            # If tile is empty, but buffer has points, abort
+            message("No points to save; marking complete")
+            mark_tile_empty()
+            mark_tile_done()
+            quit()
+        } else {
+            stop(err)
+        }
+    }
+
+    file.rename(tmp_path, dst_path)  # Move .laz to dest dir
+    file.rename( # Move .lax to dest dir
+        gsub("z$", "x", tmp_path),
+        gsub("z$", "x", dst_path)
+    )
+    unlink(tmp_dir, recursive=TRUE)  # Delete product temp dir
+    message("Writing product took ", sec_since(start_time), " seconds")
+}
+
+save_raster_product = function(product, dst_path, bbox) {
+    # Save a raster to file.
+
+    # If there is no raster data to save, make note in text file
+    mark_product_empty = function(dst_path) {
+        dst_path = gsub("\\.tif$", ".txt", dst_path)
+        msg("Raster product is empty: ", dst_path)
+        cat("Product is empty.", file=dst_path)
+        return()
+    }
+    if (is.null(product)) {
+        mark_product_empty(dst_path)
+        return()
+    }
+
+    # Only work with TIFF files
+    if (! endsWith(dst_path, ".tif")) {
+        stop("Path has unsupported file extension: ", dst_path)
+    }
+
+    # Trim tile buffer off product
+    msg("Cropping product...")
+    start_time = Sys.time()
+    cropped_product = try(terra::crop(product, bbox))
+    if (class(cropped_product) == "try-error") {
+        if (cropped_product == "Error : [crop] extents do not overlap\n") {
+            if (endsWith(dst_path, paste0(GRIDMETRICS_NAME, "_all.tif"))) {
+                # If tile is empty, but buffer has points, abort
+                message(
+                    "Buffer has points, but tile is empty; marking complete"
+                )
+                mark_tile_empty()
+                mark_tile_done()
+                quit()
+            } else {
+                # If a specific product is empty, but tile has points,
+                # create text file note in place of product
+                mark_product_empty(dst_path)
+                return()
+            }
+        } else {
+            stop(cropped_product)
+        }
+    }
+    msg("Cropping product took ", sec_since(start_time), " seconds")
+
+    # Write product to disk
+    message("Writing product to disk: ", dst_path)
+    start_time = Sys.time()
+    tmp_path = paste0(dst_path, ".tmp")
+    terra::writeRaster(
+        cropped_product, tmp_path, filetype="GTiff", overwrite=FALSE
+    )
+    file.rename(tmp_path, dst_path)
+    message("Writing product took ", sec_since(start_time), " seconds")
+}
+
+get_lidar_collection = function(ctg_pth) {
+    # Catalog a given lidar collection.
+
+    ctg = try(lidR::readLAScatalog(
+        ctg_pth,
+        progress=FALSE,
+        select=LIDAR_ATTR_FILTER,
+        filter=LIDAR_POINT_FILTER
+    ), silent=TRUE)
+
+    # Handle errors (if any)
+    if (class(ctg) == "try-error") {
+        if (ctg == "Error : File not found\n") {
+            # Ensure directory is valid LAS/LAZ collection
+            stop("Directory contains no LAS/LAZ files: ", ctg_pth)
+        } else {
+            stop(ctg)
+        }
+    }
+
+    return(ctg)
+}
+
+sec_since = function(start_time) {
+    # Compute the duration since the given timestamp.
+
+    return(as.numeric(difftime(Sys.time(), start_time, units="secs")))
+}
+
+mark_tile_done = function() {
+    # Mark a tile as done being processed using a file called "DONE".
+
+    dst_path = paste0(out_dir, "/", "DONE")
+    cat("", file=dst_path)
+}
+
+mark_tile_empty = function() {
+    # Mark a tile as having no data to process using a file called "EMPTY".
+
+    dst_path = paste0(out_dir, "/", "EMPTY")
+    cat("", file=dst_path)
+}
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Ensure export directory exists
+dir.create(out_dir, showWarnings=FALSE, recursive=TRUE, mode="0700")
+
+# Set warning messages to display
+options(warn=1)
+
+# Config threading
+lidR::set_lidr_threads(max_threads)
+lasR::set_parallel_strategy(concurrent_points(ncores=ncores()))
+
+# Import lidar collection (omit noise identified by vendor)
+msg("Collecting lidar...")
+pdf(NULL)  # Prevent creation of Rplots.pdf
+start_time = Sys.time()
+ctg = get_lidar_collection(ctg_pth)
+msg("Collecting lidar took ", sec_since(start_time), " seconds")
+gc()
+
+# Create tile boundary object (for cropping buffer off products)
+if (tile_wkt == "") {
+    msg("No tile boundary given; will use entire catalog and measure buffer ")
+    msg("from outside edge inward")
+    tile_boundary = sf::st_bbox(ctg) |>
+        sf::st_as_sfc() |>  # Convert extent to polygon
+        sf::st_buffer(-tile_buffer)
+} else {
+    tile_boundary = sf::st_as_sfc(tile_wkt) |> try(silent=TRUE)
+    if (any(class(tile_boundary) == "try-error")) {
+        stop("Invalid WKT: ", tile_wkt)
+    }
+}
+
+# Create tile boundary object that includes buffer area
+result = tile_boundary |>
+    sf::st_buffer(tile_buffer) |>
+    try()
+err = "Error in FUN(X[[i]], ...) : !anyNA(x) is not TRUE\n"
+if (any(class(result) == "try-error") && result == err) {
+    stop("Buffer is too large for this tile")
+}
+buffer_outer_boundary = result
+
+# Load subset (tile) of lidar collection
+msg("Loading lidar...")
+start_time = Sys.time()
+las = lidR::clip_roi(
+    # "clip_roi() is the single case where the control of the chunk is not
+    # respected [since] clip_roi() aims to extract a shape (rectangle, disc,
+    # polygon) as a single entity"
+    # https://cran.r-project.org/web/packages/lidR/vignettes/
+    # lidR-LAScatalog-engine.html
+    ctg,
+    buffer_outer_boundary
+)
+msg("Loading lidar took ", sec_since(start_time), " seconds")
+if (is.empty(las)) {
+    message("Tile is empty, marking complete")
+    mark_tile_empty()
+    mark_tile_done()
+    quit()
+}
+gc()
+
+# Deduplicate points
+msg("Deduplicating lidar...")
+start_time = Sys.time()
+las = lidR::filter_duplicates(las)
+msg("Deduplicating lidar took ", sec_since(start_time), " seconds")
+gc()
+
+# DEBUGGING: Save extents as shapefiles
+if (debug_save_extents) {
+    terra::writeVector(
+        terra::ext(las) |> terra::as.polygons(),
+        paste0(out_dir, "/extent-point-cloud.fgb"),
+        filetype="FlatGeobuf"
+    )
+    terra::writeVector(
+        terra::ext(tile_boundary) |> terra::as.polygons(),
+        paste0(out_dir, "/extent-bare-tile.fgb"),
+        filetype="FlatGeobuf"
+    )
+    terra::writeVector(
+        terra::ext(buffer_outer_boundary) |> terra::as.polygons(),
+        paste0(out_dir, "/extent-tile-plus-buff.fgb"),
+        filetype="FlatGeobuf"
+    )
+}
+
+# According to vendor report, vertical and horizontal units of the Black Hills
+# lidar data are in meters, so reprojection is not necessary
+
+# Notify user that height normalization should have already been done
+msg("WARNING: This script assumes points are already height normalized")
+
+# Filter out noise points missed by vendor
+msg("Removing noise...")
+start_time = Sys.time()
+las = lidR::filter_poi(las, Z < LOWPASS_DELIM)
+las = lidR::filter_poi(las, Z >= GROUND_DELIM)  # Drop below-ground points
+msg("Removing noise took ", sec_since(start_time), " seconds")
+gc()
+
+# Calculate grid metrics
+msg("Calculating grid metrics...")
+start_time = Sys.time()
+grid_metrics = get_grid_metrics(las)
+msg("Calculating grid metrics took ", sec_since(start_time), " seconds")
+gc()
+
+# Save grid metrics raster
+save_grid_metrics = function(grid_metrics, subset_name) {
+    save_raster_product(
+        product=grid_metrics,
+        dst_path=paste0(
+            out_dir,
+            "/",
+            GRIDMETRICS_NAME,
+            "_",
+            subset_name,
+            ".tif"
+        ),
+        bbox=tile_boundary
+    )
+}
+lapply(
+    names(grid_metrics),
+    function(m) {
+        save_grid_metrics(grid_metrics[[m]], m)
+    }
+) |> invisible()
+gc()
+
+# CHMs (canopy height models)
+chm_rast_func = lidR::pitfree(
+    # "We applied CHM00 to CHM15, as only 5 percent of the trees in the study
+    #  area are taller than 20 m. ... The assignment of height thresholds was
+    #  successfully applied here to CHMs with average tree heights of 13.5 m"
+    # (Khosravipour et al., 2014)
+    thresholds=c(0, 2, 5, 10, 15),
+    # "By increasing the max_edge argument for the pit-free triangulation
+    #  part from 1.5 to 2 the CHM becomes smoother but also less realistic"
+    # (The lidR package, n.d.)
+    max_edge=c(5, 1),
+    subcircle=0,
+    highest=TRUE
+)
+
+# Generate first CHM
+msg("Modeling canopy height...")
+start_time = Sys.time()
+chm1 = lidR::rasterize_canopy(
+    las,
+    res=CHM1_RES,
+    algorithm=chm_rast_func,
+    pkg="terra"
+)
+msg("Modeling canopy height took ", sec_since(start_time), " seconds")
+gc()
+
+# Save first CHM raster
+save_raster_product(
+    product=chm1,
+    dst_path=paste0(out_dir, "/", CHM1_NAME, ".tif"),
+    bbox=tile_boundary
+)
+gc()
+
+# Generate second CHM
+msg("Modeling canopy height...")
+start_time = Sys.time()
+chm2 = lidR::rasterize_canopy(
+    las,
+    res=CHM2_RES,
+    algorithm=chm_rast_func,
+    pkg="terra"
+)
+msg("Modeling canopy height took ", sec_since(start_time), " seconds")
+gc()
+
+# Save second CHM raster
+save_raster_product(
+    product=chm2,
+    dst_path=paste0(out_dir, "/", CHM2_NAME, ".tif"),
+    bbox=tile_boundary
+)
+gc()
+
+# Mark tile as processed
+mark_tile_done()
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# REFERENCES (APA)
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+#
+# Fekety, P. A., Falkowski, M. J., Hudak, A. T., Jain, T. B., & Evans, J. S.
+# (2018). Transferability of Lidar-derived Basal Area and Stem Density Models
+# within a Northern Idaho Ecoregion. Canadian Journal of Remote Sensing, 44(2),
+# 131–143.
+# https://doi.org/10.1080/07038992.2018.1461557
+#
+# Khosravipour, A., Skidmore, A. K., Isenburg, M., Wang, T., & Hussin, Y. A.
+# (2014). Generating pit-free canopy height models from airborne lidar.
+# Photogrammetric Engineering & Remote Sensing, 80(9), 863-872.
+# https://www.ingentaconnect.com/content/asprs/pers/2014/00000080/00000009/
+#     art00003?crawler=true
+#
+# The lidR package. (n.d.). Retrieved January 8, 2025, from
+# https://r-lidar.github.io/lidRbook/
+#
+# Woster, K. (2013, August 7). Alive or dead? tallest known Black Hills pine
+# focus of questions, controversy. Rapid City Journal.
+# https://rapidcityjournal.com/news/alive-or-dead-tallest-known-black-hills-
+#     pine-focus-of-questions-controversy/article_9955d0fb-af61-5293-92e2-
+#     103f968ad441.html

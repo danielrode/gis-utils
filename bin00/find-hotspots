@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+
+
+"""Find rock artifact hotspots (areas likely to have rock artifacts)."""
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Import libraries
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Import standard libraries
+import sys
+from pathlib import Path
+
+# Import in-house libraries
+from vogeler.stdlib import print2
+from vogeler.stdlib import init_logger
+
+# Import external libraries
+import numpy as np
+import rasterio as rio
+from shapely import Point
+from geopandas import GeoDataFrame
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
+
+# Text printed when user calls this script without proper parameters
+HELP_TEXT = f"""Usage: {EXE_NAME}  I_SD_FIRST_RAST  I_MEAN_FIRST_RAST
+  COUNT_ALL_RAST  COUNT_FIRST_RAST  COUNT_FIRST_HP_RAST  OUT_SHP_PATH"""
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def find_hotspots(
+    i_sd_frst_rast_path: Path,
+    i_mean_frst_rast_path: Path,
+    n_all_rast_path: Path,
+    n_frst_rast_path: Path,
+    n_frst_hp_rast_path: Path,
+) -> GeoDataFrame:
+    """Find rock artifact hotspots.
+
+    Find areas (20x20 meter grid metrics pixels) where intensity of first
+    returns has low variability, most first returns are above
+    breast-height, and average number of returns is low (compared to number
+    of pulses).
+
+    NOTE: Rocks less than 20x20 continuous meters, rocks below 1.37
+    meters, and rocks with some vegetation are likely to be missed.
+
+    NOTE: After panning around the CHM raster in QGIS with hotspots
+    overlaid, using first returns (rather than all returns) performed
+    better at finding rock hotspots, it just found more void spots (dark
+    areas in the CHM) too, but those voids can be mostly filtered out
+    using z_prop_hp. In addition to seeing better results, I chose to use
+    first returns because rock first returns are likely their only
+    returns and tree first returns are likely the leaves or twigs, which
+    should have lower intensity, and set them apart more from the rocks.
+    """
+
+    # Import rasters and make sure CRSs match
+    with rio.open(i_sd_frst_rast_path) as f:
+        i_sd_frst = f.read(1)  # Read first layer
+        crs0 = f.crs
+    with rio.open(i_mean_frst_rast_path) as f:
+        assert f.crs == crs0
+        i_mean_frst = f.read(1)  # Read first layer
+    with rio.open(n_all_rast_path) as f:
+        assert f.crs == crs0
+        n_all = f.read(1)  # Read first layer
+    with rio.open(n_frst_rast_path) as f:
+        assert f.crs == crs0
+        n_frst = f.read(1)  # Read first layer
+    with rio.open(n_frst_hp_rast_path) as f:
+        assert f.crs == crs0
+        n_frst_hp = f.read(1)  # Read first layer
+
+    # Create derivative rasters from source rasters using raster math
+    with np.errstate(divide='ignore', invalid='ignore'):
+        # Coefficient of Variation calculated from intensity of first returns
+        i_cv_frst = i_sd_frst / i_mean_frst
+        # Mean number of lidar returns per pulse
+        r_mean = n_all / n_frst
+        # Proportion of first returns above DBH threshold (1.37 meters)
+        z_prop_frst_abv_hp = n_frst_hp / n_frst
+
+    # Create a mask that isolates pixels that meet the criteria for a hotspot
+    mask = (
+        # Chose 0.5 because it looked good when panning across the CHM in
+        # QGIS as a threshold that would find and keep rocks that had a
+        # small part of a tree on it while omitting polygons that had rocks
+        # with more trees over them.
+        (i_cv_frst < 0.5)
+        # Chose 0.5 because it looked good when panning across the CHM in
+        # QGIS as a threshold that would find most rocks while omitting
+        # most ground areas.
+        & (z_prop_frst_abv_hp > 0.5)
+        # Chose 1.4 because it looked good when panning across the CHM in
+        # QGIS as a threshold that would find most rocks while omitting
+        # most low-vegetation/bushes.
+        & (r_mean < 1.3)
+    )
+
+    # Vectorize pixels of interest as points
+    hotspots_xy = list(zip(*mask.nonzero()))
+
+    def get_px_vals(v):
+        return [v[x, y] for x, y in hotspots_xy]
+    hotspots_df = GeoDataFrame(
+        {
+            "r_mean": get_px_vals(r_mean),
+            "i_cv_frst": get_px_vals(i_cv_frst),
+            "z_prop_frst_abv_hp": get_px_vals(z_prop_frst_abv_hp),
+        },
+        geometry=[Point(f.xy(x, y)) for x, y in hotspots_xy],
+        crs=f.crs,
+    )
+
+    return hotspots_df
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def main():
+    # Parse command line arguments
+    pos_args = sys.argv[1:]
+    try:
+        i_sd_frst_path = Path(pos_args[0])
+        i_mean_frst_path = Path(pos_args[1])
+        count_all_path = Path(pos_args[2])
+        count_frst_path = Path(pos_args[3])
+        count_frst_hp_path = Path(pos_args[4])
+        out_path = Path(pos_args[5])
+    except IndexError:
+        print2(HELP_TEXT)
+        sys.exit(1)
+
+    # Abort if job was already run
+    if out_path.exists():
+        print2(f"Exists (skipping): {out_path}")
+        sys.exit(0)
+
+    # Ensure source paths exist
+    for p in (
+        i_sd_frst_path,
+        i_mean_frst_path,
+        count_all_path,
+        count_frst_path,
+        count_frst_hp_path,
+    ):
+        if not p.exists():
+            print2("error: Path does not exist:", p)
+            sys.exit(1)
+
+    # Setup logging
+    global log
+    log = init_logger()
+
+    # Print start time
+    log.info("Starting...")
+
+    # Find hotspots (locations where the DTM likely needs correction)
+    dst = Path(out_path)
+    log.info("Finding hotspots...")
+    hotspots = find_hotspots(
+        i_sd_frst_path,
+        i_mean_frst_path,
+        count_all_path,
+        count_frst_path,
+        count_frst_hp_path,
+    )
+    hotspots.to_file(dst)
+
+
+if __name__ == '__main__':
+    main()

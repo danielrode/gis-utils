@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+
+
+"""Clean point cloud file.
+
+For a given LAS file, discard vendor noise, discard withheld
+points, and height normalize using a DTM raster.
+"""
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Import libraries
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Import standard libraries
+import sys
+import json
+import subprocess as sp
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+# Import in-house libraries
+from vogeler.stdlib import print2
+from vogeler.stdlib import init_logger
+from vogeler.extlib import fill_grid_na
+
+# Import external libraries
+import rasterio as rio
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
+
+# Text printed when user calls this script without proper parameters
+HELP_TEXT = f"Usage: {EXE_NAME}  SRC_LAS_PATH  DEM_RAST_PATH  OUT_LAS_PATH"
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def clean_las(
+    src_las_path: Path, dem_path: Path, dst_las_path: Path,
+) -> None:
+    """Remove noise and height normalize point cloud.
+
+    Uses PDAL and saves as new file.
+    """
+
+    pipeline = [
+        # Import point cloud data
+        str(src_las_path),
+        # Discard bad returns identified by vendor
+        {
+            "type": "filters.expression",
+            "expression": "&&".join((
+                "(Classification != 7)",   # Drop low noise
+                "(Classification != 18)",  # Drop high noise
+                "(Withheld == 0)",         # Drop discarded points
+            )),
+        },
+        # Height normalize using HAG (height above ground) filter
+        {
+            "type": "filters.hag_dem",
+            "raster": str(dem_path),
+            "band": 1,
+            # "If true, set HAG of ground-classified points to 0 rather
+            # than comparing Z value to raster DEM."
+            # https://pdal.io/en/stable/stages/filters.hag_dem.html
+            "zero_ground": True,
+        },
+        # Rename new height normalized column to Z column
+        {
+            "type": "filters.ferry",
+            "dimensions": "HeightAboveGround=>Z",
+        },
+        # Write normalized point cloud to file
+        str(dst_las_path),
+    ]
+
+    # Run PDAL
+    cmd = (
+        'pdal',
+        'pipeline',
+        '--stdin',
+    )
+    sp.run(cmd, check=True, text=True, input=json.dumps(pipeline))
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def main() -> None:
+    # Parse command line arguments
+    pos_args = sys.argv[1:]
+    try:
+        src_las_path = Path(pos_args[0])
+        dem_path = Path(pos_args[1])
+        dst_las_path = Path(pos_args[2])
+    except IndexError:
+        print2(HELP_TEXT)
+        sys.exit(1)
+
+    # Abort if job was already run before
+    if dst_las_path.exists():
+        print2(f"Exists (skipping): {dst_las_path}")
+        sys.exit(0)
+
+    # Ensure source paths exist
+    for p in (src_las_path,):
+        if not p.exists():
+            print2("Path not found:", p)
+            sys.exit(1)
+
+    # Setup logging
+    global log
+    log = init_logger()
+
+    # Print start time
+    log.info("Starting...")
+
+    with TemporaryDirectory() as tmpdir:
+        # Fill edge NAs in DEM using nearest neighbor
+        # NOTE: Sometimes point clouds have some points that overlap some NA
+        # values in the DTM raster. If this occurs, PDAL height
+        # normalization will fail (unlike lidR which uses nearest neighbor
+        # for height normalization by default when this condition is
+        # encountered). This can be mitigated by filling NA pixels with
+        # nearest neighbor values.
+        log.info("Extending DEM within extent using nearest neighbor...")
+        tmpdir = Path(tmpdir)
+        dem_filled_path = tmpdir / "dem_filled.tif"
+        with rio.open(dem_path, 'r') as f:
+            profile = f.profile
+            px = f.read()
+        px = fill_grid_na(px, neighborhood=128, fill_all=False)
+        with rio.open(dem_filled_path, 'w', **profile) as f:
+            f.write(px)
+
+        # Run PDAL to load, height normalize, and save point cloud
+        log.info("Running PDAL...")
+        clean_las(src_las_path, dem_filled_path, dst_las_path)
+
+    # Print end time
+    log.info("Finished")
+
+
+if __name__ == '__main__':
+    main()
