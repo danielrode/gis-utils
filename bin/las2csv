@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+# Author: Daniel Rode
+# Created: 02 Dec 2024
+# Updated: 21 Jul 2025
+
+
+import sys
+import json
+import pdal
+
+from vogeler.stdlib import print2
+
+
+HELP_TEXT = f"Usage: {sys.argv[0]} LAS_PATH"  # todo does sys.argv[0] show util name?
+
+
+# Parse command line arguments
+args = sys.argv[1:]
+try:
+    las_path, = args
+except ValueError:
+    print2(HELP_TEXT)
+    sys.exit(1)
+
+# Get LiDAR points that fall within the given shape boundaries and put those
+# points into a dataframe
+pdal_pipeline_json = [
+    # Import point cloud data
+    {
+        las_path,
+    }
+]
+pdal_pipeline = pdal.Pipeline(json.dumps(pdal_pipeline_json))
+pdal_pipeline.execute()
+df = pdal_pipeline.arrays[0]
+
+# Output data frame as csv
+try:
+    df.to_csv(sys.stdout)
+except BrokenPipeError:
+    pass
