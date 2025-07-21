@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 # Author: Daniel Rode
 # Created: 20 Oct 2023
-# Updated: 21 Jul 2025
+
+
+# Description: Concatenate shapefiles.
 
 
 import sys
@@ -13,7 +15,7 @@ from vogeler.extlib import catshp
 
 
 # Constants
-HELP_TEXT = f"Usage: {sys.argv[0]} IN_GPKG... OUT_GPKG"
+HELP_TEXT = f"Usage: {Path(sys.argv[0]).name} SRC_SHP... DST_GPKG"
 
 
 # Main
