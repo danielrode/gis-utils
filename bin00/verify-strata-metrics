@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+
+
+# Example Usage:
+# this.py ./*_strat_all_*.tif | xsv table -d '\t' |
+#   ov --header 1 --wrap=false --exit-write --line-number
+# this.py ./*_strat_frst_*.tif | xsv table -d '\t' |
+#   ov --header 1 --wrap=false --exit-write --line-number
+
+
+"""Verify integrity of strata metric rasters.
+
+Takes a set of raster paths that correspond to strata grid metrics. Selects
+a random pixel coordinate, and sums the values there for each raster.
+Prints this tally so the user can verify whether or not they sum up to 1.0
+(which they should). Since these are proportional values with respect to
+all points in a tile, they should sum up to 1.0.
+"""
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Import libraries
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+import sys
+import random
+import numpy as np
+import rasterio as rio
+from pathlib import Path
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def sum_strat_sample_px(tif_list: list[Path]) -> (float, float, list):
+    """Sum the value for all rasters of a pixel at a random coordinate."""
+
+    non_nan_found = False
+    px_vals = []
+    x_percent = random.randint(0, 100) / 100
+    y_percent = random.randint(0, 100) / 100
+    for t in tif_list:
+        with rio.open(t, 'r') as f:
+            # Choose a random location to sample pixel value from
+            left, bottom, right, top = f.bounds
+            x = abs(right - left) * x_percent + min([left, right])
+            y = abs(top - bottom) * y_percent + min([bottom, top])
+            coords = (x, y)
+
+            # Get pixel vale at given coordinate and add it to tally
+            px = list(f.sample([coords]))[0]
+            px_vals += list(px)
+
+            if not np.isnan(px):
+                non_nan_found = True
+
+    # If all values are nan, assume this means the coordinates fall
+    # outside the study area, and select another random location
+    # to use instead
+    if not non_nan_found:
+        return sum_strat_sample_px(tif_list)
+
+    return x, y, px_vals
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def main() -> None:
+    # Process command line arguments
+    # (Get list of strata TIF files to process from command line arguments)
+    tif_list = [Path(i) for i in sys.argv[1:]]
+
+    # Print stats table header
+    print("SUM\tX\tY\t" + '\t'.join([i.stem for i in tif_list]))
+
+    # Choose 32 random sample locations and print the strata rasters pixel
+    # value sum for each location
+    for _ in range(32):
+        x, y, px_vals = sum_strat_sample_px(tif_list)
+        tally = np.nansum(px_vals)
+        print(f"{tally}\t{x}\t{y}\t" + '\t'.join([str(i) for i in px_vals]))
+
+
+if __name__ == '__main__':
+    main()

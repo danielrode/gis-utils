@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+
+
+"""Tile up a point cloud collection.
+
+Given some point cloud collection, find its boundary and then divide that
+shape into polygons where each polygon encompasses roughly the same number
+of lidar returns. This allows for processing the point cloud collection in
+chunks later on that avoid over-filling the system's memory.
+"""
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Import libraries
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+# Import standard libraries
+import sys
+import hashlib
+from pathlib import Path
+from logging import ERROR
+
+from collections.abc import Generator
+
+# Import in-house libraries
+from vogeler.stdlib import print2
+from vogeler.stdlib import init_logger
+
+# Import external libraries
+import shapely
+import rasterio
+import rasterio.mask
+from geopandas import GeoSeries
+from geopandas import GeoDataFrame
+
+# Import R libraries
+from vogeler.r import rlib
+from vogeler.r import rpy2_logger
+from vogeler.r import get_ctg_epsgs
+from vogeler.r import get_ctg_geoms_wkt
+
+lidr = rlib("lidR")
+
+rpy2_logger.setLevel(ERROR)  # Suppress R warning messages
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
+
+# Text printed when user calls this script without proper parameters
+HELP_TEXT = f"""Usage: {EXE_NAME}  CATALOG_PATH  DENSITY_RAST_PATH
+    MAX_TILE_LENGTH  TILE_BUFFER  TILE_MAX_POINTS  OUT_GPKG_PATH"""
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Functions
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def get_ctg_shp(ctg_path: Path) -> GeoDataFrame:
+    """Get the polygon/shape of a LiDAR (LAS/LAZ) collection."""
+
+    # Get shape (polygon bounds) of point cloud collection
+    ctg = lidr.readLAScatalog(
+        str(ctg_path),
+        progress=False,
+    )
+
+    crs = set(get_ctg_epsgs(ctg))  # Get CRS of LAS catalog
+    if len(crs) != 1:
+        log.critical("LiDAR catalog has more than 1 CRS")
+        sys.exit(2)
+    else:
+        crs = list(crs)[0]
+
+    geoms_wkt = get_ctg_geoms_wkt(ctg)
+    df = GeoDataFrame(geometry=GeoSeries.from_wkt(geoms_wkt), crs=crs)
+
+    return df
+
+
+def tile_region(
+    x_min: float, y_min: float, x_max: float, y_max: float,
+    tile_x_length: int, tile_y_length: int,
+    collection_bounds: shapely.Polygon,
+    density_rast: rasterio.io.DatasetReader,
+) -> Generator[shapely.box]:
+    """Virtually tile point cloud collection.
+
+    Tile up a given region so that each tile has a relatively equal number
+    of LiDAR points in it.
+    """
+
+    if (int(tile_x_length) == 0) or (int(tile_y_length) == 0):
+        raise Exception(
+            "Point cloud is too dense. "
+            "Increase allowed number of points per tile."
+        )
+    for x in range(int(x_min), int(x_max), int(tile_x_length)):
+        for y in range(int(y_min), int(y_max), int(tile_y_length)):
+            # If grid cell falls outside collection boundary, skip it (do
+            # not print)
+            tile_bounds = shapely.box(
+                xmin=x,
+                xmax=x + tile_x_length,
+                ymin=y,
+                ymax=y + tile_y_length,
+            )
+            tile_contains_points = shapely.intersects(
+                collection_bounds,
+                tile_bounds,
+            )
+            if not tile_contains_points:
+                continue
+
+            # Count number of points within boundary (plus boundary's buffer)
+            tile_plus_buffer_bounds = shapely.box(
+                xmin=x - TILE_BUFF,
+                xmax=x + TILE_BUFF + tile_x_length,
+                ymin=y - TILE_BUFF,
+                ymax=y + TILE_BUFF + tile_y_length,
+            )
+            point_values, _ = rasterio.mask.mask(
+                density_rast,
+                [tile_plus_buffer_bounds],
+                crop=True,
+                nodata=0,  # Represent the raster's nodata value as zero
+            )
+            point_count = point_values.sum()
+
+            # Tile recursively or add tile as is
+            if point_count > TILE_MAX_POINTS:
+                # If tile is too dense, avoid OOM by recursively splitting
+                # tile further
+                if tile_x_length == tile_y_length:
+                    yield from tile_region(
+                        x, y, x + tile_x_length, y + tile_y_length,
+                        tile_x_length / 2, tile_x_length,
+                        collection_bounds,
+                        density_rast,
+                    )
+                else:
+                    new_max_tile_length = min([tile_x_length, tile_y_length])
+                    yield from tile_region(
+                        x, y, x + tile_x_length, y + tile_y_length,
+                        new_max_tile_length, new_max_tile_length,
+                        collection_bounds,
+                        density_rast,
+                    )
+            else:
+                # Add tile to tile set
+                geom = shapely.box(
+                    xmin=x,
+                    xmax=x + tile_x_length,
+                    ymin=y,
+                    ymax=y + tile_y_length,
+                )
+                yield {
+                    'geometry': geom,
+                    'point_count': point_count,
+                }
+
+
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
+def main() -> None:
+    # Parse command line arguments
+    args = sys.argv[1:]
+    global CTG_PATH
+    global DENSITY_RAST_PATH
+    global TILE_LENGTH
+    global TILE_BUFF
+    global TILE_MAX_POINTS
+    global OUT_PATH
+    try:
+        CTG_PATH = Path(args[0])
+        DENSITY_RAST_PATH = Path(args[1])
+        TILE_LENGTH = float(args[2])
+        TILE_BUFF = float(args[3])
+        TILE_MAX_POINTS = int(args[4])
+        OUT_PATH = Path(args[5])
+    except IndexError:
+        print2(HELP_TEXT)
+        sys.exit(1)
+
+    for p in [CTG_PATH, DENSITY_RAST_PATH]:
+        if not p.exists():
+            print2("error: Path does not exist: ", p)
+            sys.exit(1)
+
+    # Setup logging
+    global log
+    log = init_logger()
+
+    # Get point cloud extent
+    log.info("Getting collection bounds...")
+    ctg_shp = get_ctg_shp(CTG_PATH)
+    x_min = ctg_shp.bounds['minx'].min()
+    y_min = ctg_shp.bounds['miny'].min()
+    x_max = ctg_shp.bounds['maxx'].max()
+    y_max = ctg_shp.bounds['maxy'].max()
+
+    # Align grid bounds to origin
+    grid_x_min = (x_min // TILE_LENGTH) * TILE_LENGTH
+    grid_y_min = (y_min // TILE_LENGTH) * TILE_LENGTH
+    grid_x_max = ((x_max // TILE_LENGTH) + 1) * TILE_LENGTH
+    grid_y_max = ((y_max // TILE_LENGTH) + 1) * TILE_LENGTH
+
+    # Dissolve shape's inner lines (to simplify it and make it faster to
+    # process) and buffer all edges just a little during the process to
+    # avoid slivers
+    collection_bounds = ctg_shp.buffer(
+        distance=0.1,
+        cap_style='square',
+        join_style='mitre',
+    ).union_all()
+
+    # Print lower-left coordinate pair for each tile covering catalog extent
+    log.info("Creating tiling set...")
+    with rasterio.open(DENSITY_RAST_PATH, 'r') as density_rast:
+        df = GeoDataFrame(tile_region(
+            grid_x_min, grid_y_min, grid_x_max, grid_y_max,
+            TILE_LENGTH, TILE_LENGTH,
+            collection_bounds,
+            density_rast,
+        ), crs=ctg_shp.crs)
+
+    # Give each tile and ID (the SHA1 hash of its polygon's WKT)
+    df['tileID'] = df['geometry'].to_wkt().apply(
+        lambda x: hashlib.sha1(bytes(x, 'utf8')).hexdigest()
+    )
+
+    # Save tiling scheme
+    log.info("Saving tiling set...")
+    df.to_file(OUT_PATH)
+
+
+if __name__ == '__main__':
+    main()
