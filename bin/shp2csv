@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
 # Author: Daniel Rode
 # Created: 02 Nov 2024
-# Updated: -
 
 
 import sys
-from sys import exit
+from pathlib import Path
+
 import pyogrio
+from pandas import DataFrame
 
 
-HELP_TEXT = "Usage: this.py IN_FGB_PATH"
+EXE_NAME = Path(sys.argv[0]).name
+HELP_TEXT = f"Usage: {EXE_NAME} IN_FGB_PATH"
 
 
 # Parse command line arguments
 args = sys.argv[1:]
 try:
-  IN_PATH = args[0]
+    IN_PATH = args[0]
 except IndexError:
-  print(HELP_TEXT)
-  exit(1)
+    print(HELP_TEXT)
+    sys.exit(1)
 
 # Main
+df = DataFrame(pyogrio.read_dataframe(IN_PATH)).drop(['CRS'], axis=1)
 try:
-  pyogrio.read_dataframe(IN_PATH).to_csv(sys.stdout)
+    df.to_csv(sys.stdout)
 except BrokenPipeError:
-  exit(0)
+    sys.exit(0)
