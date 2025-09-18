@@ -3,6 +3,10 @@
 # Created: 02 Nov 2024
 
 
+# Use `shp2csv | xsv select '!geometry' | xsv select '!CRS'` to drop those
+# columns when viewing.
+
+
 import sys
 from pathlib import Path
 
@@ -10,8 +14,14 @@ import pyogrio
 from pandas import DataFrame
 
 
+# Constants
 EXE_NAME = Path(sys.argv[0]).name
 HELP_TEXT = f"Usage: {EXE_NAME} IN_FGB_PATH"
+
+
+# Functions
+def print2(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 
 # Parse command line arguments
@@ -19,11 +29,12 @@ args = sys.argv[1:]
 try:
     IN_PATH = args[0]
 except IndexError:
-    print(HELP_TEXT)
+    print2(HELP_TEXT)
     sys.exit(1)
 
 # Main
-df = DataFrame(pyogrio.read_dataframe(IN_PATH)).drop(['CRS'], axis=1)
+df = pyogrio.read_dataframe(IN_PATH)
+df = DataFrame(df)
 try:
     df.to_csv(sys.stdout)
 except BrokenPipeError:
