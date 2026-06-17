@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Author: Daniel Rode
-# Created: 08 Apr 2024
 
 
-# Description: Transform a given pair of coordinates from one projection to
-# another.
+# Transform a given pair of coordinates from one projection to another.
 
 
 import sys
@@ -18,8 +16,8 @@ from shapely.ops import transform
 from vogeler.stdlib import print2
 
 
-# Constants
-HELP_TEXT = f"Usage: {Path(sys.argv[0]).name} X Y IN_EPSG OUT_EPSG"
+EXE_NAME = Path(sys.argv[0]).name
+HELP_TEXT = f"Usage: {EXE_NAME} X Y IN_EPSG OUT_EPSG"
 
 
 # Main
@@ -39,4 +37,5 @@ transformation = pyproj.Transformer.from_crs(
     in_epsg, out_epsg, always_xy=True
 ).transform
 out_point = transform(transformation, in_point)
-print(out_point)
+x, y = out_point.x, out_point.y
+print(x, y)
