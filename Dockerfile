@@ -123,11 +123,6 @@ options(pak.sysreqs=FALSE)
 
 # Install package
 pak::pkg_install(args, lib='/usr/local/rlib')
-
-# TODO somehow check this before package install
-# # Halt and tell user if required system packages are missing
-# out = pak::sysreqs_check_installed(args)
-# if (any(!out$installed)) stop(out)
 EOF
 RUN chmod +x /bin/rinstall
 RUN mkdir -p /usr/local/rlib
@@ -145,23 +140,6 @@ RUN rinstall lwgeom  # Needed for crown statistics
 RUN rinstall tibble  # Needed by SF for loading certain vector formats
 
 RUN rinstall bioc::EBImage
-
-# TODO merge to above then rm
-COPY <<'EOF' /bin/rinstall
-#!/usr/bin/env Rscript
-library(pak)
-
-args = commandArgs(trailingOnly=TRUE)
-
-# Do not automatically install system package dependencies
-# NOTE: Pak will still say that it is going to install system packages, but
-# it will still skip the command call anyway.
-options(pak.sysreqs=FALSE)
-
-# Install package
-pak::pkg_install(args, lib='/usr/local/rlib')
-EOF
-RUN chmod +x /bin/rinstall
 
 RUN rinstall r-lidar/rlas r-lidar/lidR
 
