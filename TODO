@@ -1,0 +1,8 @@
+Merge /N:/RStor/jvogeler/Lab/users/drode/code/bin/ and put gu in ~/code
+then remove unnecessary items from PATH under ~/code cfg
+
+Integrate functions from /mnt/mesa/working/bh/products/itd/llib.py
+
+- make csv2hist, then make histshp simply echo "Use shp2csv | csv2hist"
+- catshp: progress bar, --no-clobber flag,
+- add lastools and pylasr
