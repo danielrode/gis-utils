@@ -19,10 +19,14 @@ RUN ash <<'EOF'
     set -e  # Exit on error
 
     apk add --no-cache \
-        gdal \
         R \
+        fftw-double-libs \
+        gdal \
+        gdal-tools \
+        pdal \
         proj-util \
         python3 \
+        udunits \
     ;
 EOF
 
@@ -158,6 +162,38 @@ deps = pak::sysreqs_check_installed(); \
 if (any(!deps$installed)) stop(deps); '
 
 
+############################################################################
+# -- PDAL WRENCH BUILD IMAGE --
+############################################################################
+
+# Image for installing and building R packages
+
+FROM base0 AS builder_wrench
+
+# Install Alpine Linux packages for building PDAL Wrench
+RUN ash <<'EOF'
+    set -e  # Exit on error
+
+    apk add --no-cache \
+        cmake \
+        g++ \
+        git \
+        libzip-dev \
+        make \
+        pdal-dev \
+    ;
+
+    # Build and install PDAL Wrench from source
+    git clone "https://github.com/PDAL/wrench"
+    mkdir wrench/build
+    cd wrench/build
+    cmake ..
+    make
+
+    mv pdal_wrench /usr/local/bin/pdal_wrench
+EOF
+
+
 ###############################################################################
 # -- LASTOOLS "BUILD" IMAGE --
 ############################################################################
@@ -180,6 +216,7 @@ RUN find /opt/lastools/bin/ -print0 -type f -maxdepth 1 -name '*64' | \
     xargs -0 -I@ sh -c 'ln -sv "$1" "$(echo "$1" | sed "s/64$//")"' '' @
 
 # TODO lastool binaries are missing runtime dependencies
+# see https://github.com/LAStools/LAStools#linux
 
 
 ###############################################################################
@@ -192,28 +229,20 @@ FROM base0
 RUN ash <<'EOF'
     set -e  # Exit on error
     apk add --no-cache \
-        R \
         bash \
         file \
         fish \
         helix \
         fd \
-        fftw-double-libs \
-        gdal-tools \
+        libzip \
         openssh \
         parallel \
-        pdal \
-        proj-util \
-        python3 \
         ripgrep \
-        udunits \
     ;
 EOF
 
 # Install binary dependencies from sister containers
-COPY --from=ghcr.io/vogelerlab/pdal_wrench:main \
-    /usr/local/bin/pdal_wrench /usr/local/bin/pdal_wrench
-
+COPY --from=builder_wrench /usr/local/bin/pdal_wrench /usr/local/bin/
 COPY --from=builder_r /usr/local/rlib /usr/local/rlib
 COPY --from=builder_py /usr/local/pylib /usr/local/pylib
 COPY --from=builder_lastools /opt/lastools /opt/lastools

@@ -35,3 +35,8 @@ docker build \
     --tag "gis-utils:latest" \
     . \
 ;
+docker tag gis-utils:latest gis-utils:dev
+
+# Publish image
+docker push gis-utils:dev ghcr.io/danielrode/gis-utils:dev
+docker pull ghcr.io/danielrode/gis-utils:dev
