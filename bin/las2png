@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+# author: daniel rode
+# created: 05 sep 2025
+# updated: 12 jun 2026
+
+
+import sys
+from pathlib import Path
+
+import laspy
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+
+GRAPH_DPI = 600
+
+
+def graph_las(
+    src_las,
+    dst_png,
+    init_ax=None,
+    col='z',
+    mrk=',',
+    cmap='rainbow',
+    s='z',
+    png_dpi=GRAPH_DPI,
+):
+    # Setup matplotlib canvas
+    if init_ax is None:
+        fig, ax = plt.subplots()
+    else:
+        ax = init_ax
+        fig = ax.figure
+
+    # Import plot point cloud
+    las = laspy.read(src_las)
+
+    # Format returns for graphing
+    points = pd.DataFrame({
+        'x': np.array(las['x']),
+        'y': np.array(las['y']),
+        # Source data should already be height-normalized
+        'z': np.array(las['z']),
+    })
+    if col not in ('x', 'y', 'z'):
+        points[col] = np.array(las[col])
+    points = points.sort_values(by='z')
+
+    # Graph point cloud
+    ax.set_aspect('equal')
+    if s in points:
+        s = points[col]
+    scattered = ax.scatter(
+        points.x,
+        points.y,
+        s=s,
+        c=points[col],
+        alpha=0.9,
+        marker=mrk,
+        # cmap='Blues',
+        cmap=cmap,
+        edgecolors=None,
+    )
+    fig.colorbar(
+        scattered,
+        ax=ax,
+        orientation='vertical',
+        shrink=0.75,
+        pad=0.02,
+    )
+    fig.savefig(dst_png, dpi=png_dpi)
+
+    return ax
+
+
+src_las = Path(sys.argv[1])
+dst_png = Path(sys.argv[2])
+# graph_las(src_las, dst_png, col='treeID')
+graph_las(src_las, dst_png)

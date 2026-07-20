@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+# author: daniel rode
+# created: 26 may 2026
+# updated: -
+
+
+# Get the bounding boxes of the given GeoTIFFs and save them as a shapefile.
+
+
+import sys
+from pathlib import Path
+
+import shapely
+import rasterio as rio
+from geopandas import GeoDataFrame
+
+
+EXE_NAME = Path(__file__).name
+HELP_TEXT = f"Usage: {EXE_NAME} TIF_DIR SHP_PATH"
+
+
+def print2(*args, **kwargs):
+    print(*args, **kwargs, file=sys.stderr)
+
+
+# Parse command line arguments
+try:
+    tif_dir = Path(sys.argv[1])
+    out_shp = Path(sys.argv[2])
+except IndexError:
+    print2(HELP_TEXT)
+    sys.exit(1)
+
+if not tif_dir.exists():
+    print2("error: Directory not found:", tif_dir)
+
+# Get bounding boxes
+print("Getting bounds...")
+crs = None
+bboxes = []
+for tif in tif_dir.glob("*.tif"):
+    print(tif)
+    with rio.open(tif, 'r') as f:
+        bboxes += [{
+            'name': tif.stem,
+            'geometry': shapely.box(*f.bounds),
+        }]
+
+        if f.crs == crs:
+            continue
+        elif crs is None:
+            crs = f.crs
+        else:
+            raise Exception("Tiles have different CRSs")
+
+gdf = GeoDataFrame(bboxes, crs=crs)
+
+# Save to file
+gdf.to_file(out_shp)
