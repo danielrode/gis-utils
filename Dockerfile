@@ -43,7 +43,7 @@ FROM base0 AS builder_py
 RUN ash <<'EOF'
     set -e  # Exit on error
 
-    apk add --no-cache \
+    apk add \
         g++ \
         gcc \
         gdal-dev \
@@ -89,7 +89,7 @@ FROM base0 AS builder_r
 RUN ash <<'EOF'
     set -e  # Exit on error
 
-    apk add --no-cache \
+    apk add \
         abseil-cpp-dev \
         boost-dev \
         fftw-dev \
@@ -157,9 +157,10 @@ RUN rinstall pak
 RUN rinstall github::ptompalski/lidRmetrics
 
 # Make sure all system dependencies are installed
-RUN Rscript -e '\
-deps = pak::sysreqs_check_installed(); \
-if (any(!deps$installed)) stop(deps); '
+RUN Rscript - <<'EOF'
+deps = pak::sysreqs_check_installed()
+if (any(!deps$installed)) stop(deps)
+EOF
 
 
 ############################################################################
@@ -174,7 +175,7 @@ FROM base0 AS builder_wrench
 RUN ash <<'EOF'
     set -e  # Exit on error
 
-    apk add --no-cache \
+    apk add \
         cmake \
         g++ \
         git \
@@ -200,23 +201,34 @@ EOF
 
 FROM base0 AS builder_lastools
 
-# Download and install LAStools
-RUN wget -O /lt.tgz https://downloads.rapidlasso.de/LAStools.tar.gz && \
-    hash="$(sha1sum </lt.tgz | cut -f1 -d' ')" && \
-    test "$hash" = dcc1679426e6e7eb04e81bff3937b71d075d8cac
-RUN mkdir /opt/lastools
-RUN tar xf /lt.tgz --directory /opt/lastools
-RUN mkdir /opt/lastools/docs
-RUN mv -v /opt/lastools/bin/*.md /opt/lastools/docs/
-RUN chmod 755 /opt/lastools
-RUN find /opt/lastools/ -type d | xargs chmod 755
-RUN find /opt/lastools/ -type f | xargs chmod 644
-RUN find /opt/lastools/bin -type f | xargs chmod 755
-RUN find /opt/lastools/bin/ -print0 -type f -maxdepth 1 -name '*64' | \
-    xargs -0 -I@ sh -c 'ln -sv "$1" "$(echo "$1" | sed "s/64$//")"' '' @
+# Install Alpine Linux packages for building LAStools
+RUN apk add \
+    build-base \
+    cmake \
+    git \
+    libgeotiff-dev \
+    libjpeg-turbo-dev \
+    libpng-dev \
+    libwebp-dev \
+    proj-dev \
+    sqlite-dev \
+    tiff-dev \
+    xz-dev \
+    zlib-dev \
+    zstd-dev \
+;
 
-# TODO lastool binaries are missing runtime dependencies
-# see https://github.com/LAStools/LAStools#linux
+# Compile LAStools
+RUN git clone https://github.com/LAStools/LAStools
+RUN cd /LAStools && cmake -DCMAKE_BUILD_TYPE=Release CMakeLists.txt
+RUN cd /LAStools && cmake --build .
+
+# Install LAStools
+RUN cd /LAStools/bin64 && find . -type f -name '*64' \
+    | xargs basename -a \
+    | sed 's/64$//' \
+    | xargs -I@ ln -sv @64 @ \
+;
 
 
 ###############################################################################
@@ -245,7 +257,7 @@ EOF
 COPY --from=builder_wrench /usr/local/bin/pdal_wrench /usr/local/bin/
 COPY --from=builder_r /usr/local/rlib /usr/local/rlib
 COPY --from=builder_py /usr/local/pylib /usr/local/pylib
-COPY --from=builder_lastools /opt/lastools /opt/lastools
+COPY --from=builder_lastools /LAStools/bin64 /opt/lastools/bin
 
 ENV R_LIBS_USER=/usr/local/rlib
 

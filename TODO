@@ -5,8 +5,4 @@ Integrate functions from /mnt/mesa/working/bh/products/itd/llib.py
 
 - make csv2hist, then make histshp simply echo "Use shp2csv | csv2hist"
 - catshp: progress bar, --no-clobber flag,
-- add lastools and pylasr
-	- https://rapidlasso.de/lastools-linux/
-	- lastools does not like alpine (even with gcompat), so i may need to install glibc under /opt and call lastools utilities with that
-		- should verify lastools works on ubuntu image first
-		- /opt/glibc-custom/lib/ld-linux-x86-64.so.2 --library-path /opt/glibc-custom/lib:/usr/lib/x86_64-linux-gnu ./my_program
+- add pylasr

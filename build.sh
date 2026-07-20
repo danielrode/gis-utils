@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # author: daniel rode
 # dependencies:
-#   podman 5.8.2
+#   podman 5.8.4
 #   git
 
 
