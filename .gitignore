@@ -1,1 +1,4 @@
 .trash
+*.log
+tmp-*
+__pycache__
