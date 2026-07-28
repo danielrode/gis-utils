@@ -267,3 +267,6 @@ COPY lib /vogeler/lib
 
 ENV PYTHONPATH="/vogeler/lib/py"
 ENV PATH="/vogeler/bin:/usr/local/pylib/bin:$PATH:/opt/lastools/bin"
+
+# Set proj to download transformation assets on demand
+ENV PROJ_NETWORK=ON
