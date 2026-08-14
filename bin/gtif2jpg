@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+# author: daniel rode
+# created: 07 may 2026
+# updated: 20 may 2026
+
+
+"""Convert a GeoTIFF raster into a JPEG image."""
+
+
+import sys
+import json
+import subprocess as sp
+from pathlib import Path
+
+
+MAX_LENGTH = 4096
+MAX_LENGTH = 8192
+
+
+src_tif = Path(sys.argv[1])
+if not src_tif.exists():
+    print("error: File not found: $src_tif")
+    exit(1)
+
+try:
+    dst_jpg = Path(sys.argv[2])
+except IndexError:
+    dst_jpg = Path(src_tif.with_suffix('.jpg'))
+
+cmd = (
+    'gdalinfo',
+    '-json',
+    str(src_tif),
+)
+p = sp.run(cmd, check=True, text=True, capture_output=True)
+x0, y0 = json.loads(p.stdout)['size']
+
+if (x0 <= MAX_LENGTH) and (y0 <= MAX_LENGTH):
+    x, y = x0, y0
+elif x0 > y0:
+    x, y = MAX_LENGTH, 0  # '0' means preserve aspect ratio
+else:
+    x, y = 0, MAX_LENGTH
+
+cmd = (
+    'gdal_translate',
+    '-b', '1',  # Use first layer/band
+    '-ot', 'Byte',
+    # If max pixel values can be very large, scale them down so it fits
+    # into jpeg pixel value range
+    '-scale',
+    '-of', 'JPEG',
+    '-outsize', str(x), str(y),
+    str(src_tif),
+    str(dst_jpg),
+)
+p = sp.run(cmd)
+sys.exit(p.returncode)
