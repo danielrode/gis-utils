@@ -244,6 +244,7 @@ RUN ash <<'EOF'
         bash \
         file \
         fish \
+        gdal-driver-jpeg \
         helix \
         fd \
         libzip \
