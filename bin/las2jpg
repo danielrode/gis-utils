@@ -2,13 +2,14 @@
 # author: daniel rode
 # dependencies: pdal, gdal
 # created: 01 oct 2026
-# updated: -
+# updated: 03 oct 2026
 
 
 """Generate density raster of a LAS file and save as viridis JPEG."""
 
 
 import sys
+import json
 import subprocess as sp
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,6 +27,15 @@ nv   255 0   255
 '''
 
 
+def print2(*a, **kw):
+    print(*a, **kw, file=sys.stderr)
+
+def check(proc):
+    if proc.returncode != 0:
+        print2("error: Command failed:", proc.args)
+        sys.exit(proc.returncode)
+
+
 def main():
     # Parse command line arguments
     src_las = Path(sys.argv[1])
@@ -33,23 +43,43 @@ def main():
 
     with TemporaryDirectory() as td:
         # Generate density raster
-        sp.run(
+        pdal_pipeline = [
+            str(src_las),
+            # {
+            #     "type": "filters.outlier",
+            #     "method": "radius",
+            #     "radius": 1.0,
+            #     "min_k": 8,
+            # },
+            # {
+            #     "type": "filters.expression",
+            #     "expression": "Classification != 7"
+            # },
+            {
+                "filename": str(Path(td, 'all_count.tif')),
+                "binmode": True,
+                "resolution": RES,
+                "gdaldriver": "GTiff",
+                "dimension": "X",
+                "output_type": ["count"],
+            },
+        ]
+        p = sp.run(
             (
                 'pdal',
-                'translate',
-                str(src_las),
-                Path(td, 'all_count.tif'),
-                '--writers.gdal.resolution=' + str(RES),
-                '--writers.gdal.output_type=count',
-                '--writers.gdal.gdaldriver=GTiff',
+                'pipeline',
+                '--stdin',
             ),
-            check=True,
+            check=False,
+            input=json.dumps(pdal_pipeline),
+            text=True
         )
+        check(p)
 
         # Apply Viridis color-map
         viridis_fp = Path(td, 'viridis.txt')
         viridis_fp.write_text(VIRIDIS_COLORMAP)
-        sp.run(
+        p = sp.run(
             (
                 'gdaldem',
                 'color-relief',
@@ -57,19 +87,21 @@ def main():
                 str(viridis_fp),
                 Path(td, 'all_count_colored.tif'),
             ),
-            check=True,
+            check=False,
         )
+        check(p)
 
         # Render GeoTIFF as JPEG
-        sp.run(
+        p = sp.run(
             (
                 'gdal_translate',
                 '-of', 'JPEG',
                 Path(td, 'all_count_colored.tif'),
                 str(dst_jpg),
             ),
-            check=True,
+            check=False,
         )
+        check(p)
 
 if __name__ == '__main__':
     main()
