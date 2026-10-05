@@ -75,6 +75,8 @@ RUN /usr/local/pylib/bin/python3 -m pip install  xyzservices
 RUN /usr/local/pylib/bin/python3 -m pip install  laspy[lazrs]
 RUN /usr/local/pylib/bin/python3 -m pip install  openpyxl
 RUN /usr/local/pylib/bin/python3 -m pip install  ipython
+RUN /usr/local/pylib/bin/python3 -m pip install  numpy
+RUN /usr/local/pylib/bin/python3 -m pip install  gdal[numpy]
 
 
 ###############################################################################
