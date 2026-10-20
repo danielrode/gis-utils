@@ -62,7 +62,13 @@ RUN python3 -m venv /usr/local/pylib
 RUN /usr/local/pylib/bin/python3 -m pip install --upgrade pip
 
 # Build and download Python libraries via pip
+RUN /usr/local/pylib/bin/python3 -m pip install  contextily
+RUN /usr/local/pylib/bin/python3 -m pip install  gdal[numpy]
 RUN /usr/local/pylib/bin/python3 -m pip install  geopandas
+RUN /usr/local/pylib/bin/python3 -m pip install  ipython
+RUN /usr/local/pylib/bin/python3 -m pip install  laspy[lazrs]
+RUN /usr/local/pylib/bin/python3 -m pip install  numpy
+RUN /usr/local/pylib/bin/python3 -m pip install  openpyxl
 RUN /usr/local/pylib/bin/python3 -m pip install  pathos
 RUN /usr/local/pylib/bin/python3 -m pip install  rasterio
 RUN /usr/local/pylib/bin/python3 -m pip install  rasterstats
@@ -70,13 +76,8 @@ RUN /usr/local/pylib/bin/python3 -m pip install  rpy2
 RUN /usr/local/pylib/bin/python3 -m pip install  scikit-learn
 RUN /usr/local/pylib/bin/python3 -m pip install  seaborn
 RUN /usr/local/pylib/bin/python3 -m pip install  xmltodict
-RUN /usr/local/pylib/bin/python3 -m pip install  contextily
 RUN /usr/local/pylib/bin/python3 -m pip install  xyzservices
-RUN /usr/local/pylib/bin/python3 -m pip install  laspy[lazrs]
-RUN /usr/local/pylib/bin/python3 -m pip install  openpyxl
-RUN /usr/local/pylib/bin/python3 -m pip install  ipython
-RUN /usr/local/pylib/bin/python3 -m pip install  numpy
-RUN /usr/local/pylib/bin/python3 -m pip install  gdal[numpy]
+RUN /usr/local/pylib/bin/python3 -m pip install  pyyaml
 
 
 ###############################################################################
