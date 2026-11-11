@@ -245,12 +245,14 @@ RUN ash <<'EOF'
     set -e  # Exit on error
     apk add --no-cache \
         bash \
+        fd \
         file \
         fish \
         gdal-driver-jpeg \
+        git \
         helix \
-        fd \
         libzip \
+        neovim \
         openssh \
         parallel \
         ripgrep \
