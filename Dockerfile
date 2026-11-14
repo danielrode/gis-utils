@@ -27,7 +27,11 @@ RUN apk add --no-cache \
     udunits \
 ;
 
-
+# Install Alpine Linux packages needed by Goose runtime
+RUN apk add --no-cache \
+    libgcc \
+    libstdc++ \
+;
 
 
 ###############################################################################
@@ -176,7 +180,7 @@ RUN apk add \
 ;
 
 # Build and install PDAL Wrench from source
-WORKDIR /usr/src/wrench
+WORKDIR /usr/src/
 RUN git clone "https://github.com/PDAL/wrench"
 RUN mkdir wrench/build
 WORKDIR wrench/build
@@ -221,6 +225,39 @@ RUN cd /LAStools/bin64 && find . -type f -name '*64' \
 
 
 ###############################################################################
+# -- GOOSE BUILD IMAGE --
+############################################################################
+
+FROM base0 AS builder_goose
+
+# Install Alpine Linux packages for building Goose
+RUN apk add \
+    build-base \
+    cargo \
+    clang22-libclang \
+    cmake \
+    git \
+    linux-headers \
+;
+
+# Compile Goose
+WORKDIR /usr/src/
+RUN latest_release_tag="$( \
+    git ls-remote --tags --sort='version:refname' \
+        https://github.com/aaif-goose/goose.git \
+    | grep -v -- '-rc[.-]' \
+    | tail -1 \
+    | rev \
+    | cut -d/ -f1 \
+    | rev \
+)" && git clone --branch "$latest_release_tag" --depth 1 \
+    https://github.com/aaif-goose/goose \
+;
+WORKDIR goose
+RUN cargo build --release
+
+
+###############################################################################
 # -- FINAL IMAGE --
 ############################################################################
 
@@ -250,6 +287,7 @@ COPY --from=builder_wrench /usr/src/wrench/build/pdal_wrench /usr/local/bin/
 COPY --from=builder_r /usr/local/rlib /usr/local/rlib
 COPY --from=builder_py /usr/local/pylib /usr/local/pylib
 COPY --from=builder_lastools /LAStools/bin64 /opt/lastools/bin
+COPY --from=builder_goose /usr/src/goose/target/release/goose /usr/local/bin/
 
 ENV R_LIBS_USER=/usr/local/rlib
 
