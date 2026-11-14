@@ -14,21 +14,20 @@ FROM docker.io/alpine:edge AS base0
 
 LABEL Author="Daniel Rode"
 
-# Install Alpine Linux packages
-RUN ash <<'EOF'
-    set -e  # Exit on error
+# Install Alpine Linux packages needed by R and R package and Python
+# and Python package runtimes
+RUN apk add --no-cache \
+    R \
+    fftw-double-libs \
+    gdal \
+    gdal-tools \
+    pdal \
+    proj-util \
+    python3 \
+    udunits \
+;
 
-    apk add --no-cache \
-        R \
-        fftw-double-libs \
-        gdal \
-        gdal-tools \
-        pdal \
-        proj-util \
-        python3 \
-        udunits \
-    ;
-EOF
+
 
 
 ###############################################################################
@@ -40,22 +39,18 @@ EOF
 FROM base0 AS builder_py
 
 # Install Alpine Linux packages for building Python libraries
-RUN ash <<'EOF'
-    set -e  # Exit on error
-
-    apk add \
-        g++ \
-        gcc \
-        gdal-dev \
-        geos-dev \
-        make \
-        proj-dev \
-        proj-data \
-        py3-pip \
-        python3-dev \
-        R-dev \
-    ;
-EOF
+RUN apk add \
+    g++ \
+    gcc \
+    gdal-dev \
+    geos-dev \
+    make \
+    proj-dev \
+    proj-data \
+    py3-pip \
+    python3-dev \
+    R-dev \
+;
 
 # Setup install destination for Python libraries
 RUN python3 -m venv /usr/local/pylib
@@ -89,47 +84,43 @@ RUN /usr/local/pylib/bin/python3 -m pip install  pyyaml
 FROM base0 AS builder_r
 
 # Install Alpine Linux packages for building R libraries
-RUN ash <<'EOF'
-    set -e  # Exit on error
-
-    apk add \
-        abseil-cpp-dev \
-        boost-dev \
-        fftw-dev \
-        fontconfig-dev \
-        fribidi-dev \
-        g++ \
-        gdal-dev \
-        geos-dev \
-        harfbuzz-dev \
-        libgit2-dev \
-        libjpeg-turbo-dev \
-        libuv-dev \
-        libxml2-dev \
-        linux-headers \
-        proj-dev \
-        R-dev \
-        tiff-dev \
-        udunits-dev \
-    ;
-EOF
+RUN apk add \
+    abseil-cpp-dev \
+    boost-dev \
+    fftw-dev \
+    fontconfig-dev \
+    fribidi-dev \
+    g++ \
+    gdal-dev \
+    geos-dev \
+    harfbuzz-dev \
+    libgit2-dev \
+    libjpeg-turbo-dev \
+    libuv-dev \
+    libxml2-dev \
+    linux-headers \
+    proj-dev \
+    R-dev \
+    tiff-dev \
+    udunits-dev \
+;
 
 # Setup script for installing R packages
 RUN Rscript -e 'install.packages("pak", repo="https://cran.rstudio.com")'
 
 COPY <<'EOF' /bin/rinstall
 #!/usr/bin/env Rscript
-library(pak)
+    library(pak)
 
-args = commandArgs(trailingOnly=TRUE)
+    args = commandArgs(trailingOnly=TRUE)
 
-# Do not automatically install system package dependencies
-# NOTE: Pak will still say that it is going to install system packages, but
-# it will still skip the command call anyway.
-options(pak.sysreqs=FALSE)
+    # Do not automatically install system package dependencies
+    # NOTE: Pak will still say that it is going to install system packages, but
+    # it will still skip the command call anyway.
+    options(pak.sysreqs=FALSE)
 
-# Install package
-pak::pkg_install(args, lib='/usr/local/rlib')
+    # Install package
+    pak::pkg_install(args, lib='/usr/local/rlib')
 EOF
 RUN chmod +x /bin/rinstall
 RUN mkdir -p /usr/local/rlib
@@ -161,8 +152,8 @@ RUN rinstall github::ptompalski/lidRmetrics
 
 # Make sure all system dependencies are installed
 RUN Rscript - <<'EOF'
-deps = pak::sysreqs_check_installed()
-if (any(!deps$installed)) stop(deps)
+    deps = pak::sysreqs_check_installed()
+    if (any(!deps$installed)) stop(deps)
 EOF
 
 
@@ -175,31 +166,26 @@ EOF
 FROM base0 AS builder_wrench
 
 # Install Alpine Linux packages for building PDAL Wrench
-RUN ash <<'EOF'
-    set -e  # Exit on error
+RUN apk add \
+    cmake \
+    g++ \
+    git \
+    libzip-dev \
+    make \
+    pdal-dev \
+;
 
-    apk add \
-        cmake \
-        g++ \
-        git \
-        libzip-dev \
-        make \
-        pdal-dev \
-    ;
-
-    # Build and install PDAL Wrench from source
-    git clone "https://github.com/PDAL/wrench"
-    mkdir wrench/build
-    cd wrench/build
-    cmake ..
-    make
-
-    mv pdal_wrench /usr/local/bin/pdal_wrench
-EOF
+# Build and install PDAL Wrench from source
+WORKDIR /usr/src/wrench
+RUN git clone "https://github.com/PDAL/wrench"
+RUN mkdir wrench/build
+WORKDIR wrench/build
+RUN cmake ..
+RUN make
 
 
 ###############################################################################
-# -- LASTOOLS "BUILD" IMAGE --
+# -- LASTOOLS BUILD IMAGE --
 ############################################################################
 
 FROM base0 AS builder_lastools
@@ -259,8 +245,8 @@ RUN ash <<'EOF'
     ;
 EOF
 
-# Install binary dependencies from sister containers
-COPY --from=builder_wrench /usr/local/bin/pdal_wrench /usr/local/bin/
+# Install binary dependencies from build containers
+COPY --from=builder_wrench /usr/src/wrench/build/pdal_wrench /usr/local/bin/
 COPY --from=builder_r /usr/local/rlib /usr/local/rlib
 COPY --from=builder_py /usr/local/pylib /usr/local/pylib
 COPY --from=builder_lastools /LAStools/bin64 /opt/lastools/bin
