@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+# author: daniel rode
+
+
+"""Convert lat (y) long (x) DMS to long (x) lat (y) DD format.
+
+Convert a given pair of latitude longitude coordinates that aer in Degrees,
+Minutes, Seconds (DMS) format to Decimal Degrees (DD) format, with longitude
+first (so that the coordinate pair follow the x,y format).
+"""
+
+
+import re
+
+
+def dms2dd(dms_str: str) -> tuple[float, float]:
+    """Convert lat long DMS str to lat long DD tuple."""
+
+    # Regex to capture degrees, minutes, seconds, and hemisphere for both coordinates
+    regex = r"""(\d+)°(\d+)'([\d.]+)"([NSEW])"""
+    matches = re.findall(regex, dms_str)
+
+    if len(matches) != 2:
+        raise ValueError("Invalid DMS coordinate format.")
+
+    coords = []
+    for deg, mins, secs, hemisphere in matches:
+        # Calculate absolute decimal degrees
+        dd = float(deg) + float(mins) / 60 + float(secs) / 3600
+
+        # South and West coordinates must be negative
+        if hemisphere in ['S', 'W']:
+            dd *= -1
+
+        coords += [round(dd, 8)]
+
+    return coords
+
+
+# Main
+dms_str = input("Enter lat long DMS coords: ")
+lat, lon = dms2dd(dms_str)
+
+print(f"{lon},{lat}")

@@ -1,41 +1,39 @@
-#!/usr/bin/env Rscript
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 # Author: Daniel Rode
-# Dependencies:
-#   sf
-#   lidR
 # Created: 30 Sep 2024
-# Updated: 04 Nov 2024
 
 
 # Description: Clip a given LiDAR file to a polygon.
 
 
-library(lidR)
-library(sf, warn.conflicts = FALSE)
+import sys
+from pathlib import Path
 
+import pyogrio
+
+from vogeler.stdlib import print2
+from vogeler.lidr import clip_las
+
+
+# Constants
+HELP_TEXT = f"Usage: {Path(sys.argv[0]).name} SRC_LAS SHP DST_LAS"
+
+
+# Main
 
 # Parse command line arguments
-args = commandArgs(trailingOnly = TRUE)
-if (length(args) < 3) {
-  print("Usage: clip-las  LAS  GEOM  OUTPUT")
-  quit(status = 1)
-}
-ctg_path = args[1]
-geom_path = args[2]
-out_path = args[3]
+try:
+    args = sys.argv[1:]
+    las_path, shp_path, out_path = args
+except ValueError:
+    print2(HELP_TEXT)
+    exit(1)
 
-for (p in c(ctg_path)) {
-  if (!(file.exists(p))) {
-    stop("error: File not found:", p)
-  }
-}
+out_path = Path(out_path)
 
-# Import data
-pdf(NULL)
-ctg = lidR::readLAScatalog(ctg_path)
-bound = sf::read_sf(geom_path)
+# Import clipping geometry
+geom = pyogrio.read_dataframe(shp_path).dissolve().geometry
 
-# Clip and save
-bound = sf::st_transform(bound, sf::st_crs(ctg))
-clipped_ctg = lidR::clip_roi(ctg, bound)
-lidR::writeLAS(clipped_ctg, out_path)
+# Clip point cloud and save to file
+clip_las(las_path, geom, out_path)

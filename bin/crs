@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+
+
+# Print the CRS of the given shapefile.
+
+
+import sys
+from pathlib import Path
+
+import pyogrio
+
+from vogeler.stdlib import print2
+
+
+EXE_NAME = Path(sys.argv[0]).name
+HELP_TEXT = f"Usage: {EXE_NAME} SHP_PATH"
+
+
+# Parse command line arguments
+try:
+    shp_path = Path(sys.argv[1])
+except IndexError:
+    print2(HELP_TEXT)
+    sys.exit(1)
+
+# Get and print bounding box values
+df = pyogrio.read_dataframe(shp_path)
+print(df.crs.to_epsg())

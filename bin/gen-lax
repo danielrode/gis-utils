@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+# author: daniel rode
+# created: 02 jun 2026
+# updated: 02 jul 2026
+
+
+"""Index (create .lax for) the given LAS/LAZ file."""
+
+
+import sys
+import shutil
+import subprocess as sp
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+
+EXE_NAME = Path(__file__).name
+HELP_TEXT = f"Usage: {EXE_NAME} SRC_LAS"
+
+
+def print2(*args, **kwargs):
+    print(*args, **kwargs, file=sys.stderr)
+
+
+def printu(*args, **kwargs):
+    print(*args, **kwargs, flush=True)
+
+
+def printu2(*args, **kwargs):
+    print(*args, **kwargs, file=sys.stderr, flush=True)
+
+
+def gen_lax(fp):
+    """Create index for point cloud file.
+
+    Copy source LAS/LAZ to temp dir, generate .lax file for it. Copy .lax to
+    tempdir on same drive as source point cloud (to mitigate partially written
+    .lax being mistaken as complete). Move .lax next to source .las/.laz file.
+    """
+
+    r_payload = r'''
+    # Set warning messages to display
+    options(warn=1)
+
+    # Print each code line as it get's executed
+    options(echo = TRUE)
+
+    library(lasR)
+    args = commandArgs(trailingOnly=TRUE)
+    src_las = file.path(args[1])
+    if (!file.exists(src_las)) stop("File not found")
+
+    pipeline = lasR::write_lax(overwrite=FALSE, embedded=FALSE)
+    lasR::exec(pipeline, on=src_las)
+    cat('', file=file.path(dirname(src_las), 'DONE'))
+    '''
+
+    with TemporaryDirectory() as td:
+        tmp_src = Path(td, fp.name)
+        shutil.copyfile(fp, tmp_src, follow_symlinks=True)
+
+        cmd = (
+            'Rscript',
+            '-',
+            str(tmp_src),
+        )
+        p = sp.run(
+            cmd,
+            text=True,
+            input=r_payload,
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+
+        if not Path(td, 'DONE').exists():
+            raise Exception("DONE file does not exist; " + str(p))
+
+        lax_tmp_fp1 = tmp_src.with_suffix('.lax')
+
+        with TemporaryDirectory(dir=fp.parent, prefix=".tmp_") as td2:
+            lax_tmp_fp2 = Path(td2, lax_tmp_fp1.name)
+            try:
+                shutil.copyfile(lax_tmp_fp1, lax_tmp_fp2)
+            except FileNotFoundError:
+                raise Exception("LAX file does not exist; " + str(p))
+
+            lax_tmp_fp2.rename(fp.with_suffix('.lax'))
+
+    return fp
+
+
+if __name__ == '__main__':
+    gen_lax(Path(sys.argv[1]))

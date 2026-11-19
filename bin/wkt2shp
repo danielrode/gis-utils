@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+# todo utf string
+# author: Daniel Rode
+# created: 25 Oct 2025
+# updated: -
+
+
+import sys
+from pathlib import Path
+
+import shapely
+from geopandas import GeoDataFrame
+
+
+# Constants
+EXE_NAME = Path(sys.argv[0]).name
+HELP_TEXT = f"Usage: {EXE_NAME} WKT EPSG DST_SHP"
+
+
+# Functions
+def print2(*args, **kwargs):
+    print(*args, **kwargs, file=sys.stderr)
+
+
+# Main
+try:
+    wkt, epsg, dst_shp = sys.argv[1:]
+except ValueError:
+    print2(HELP_TEXT)
+    sys.exit(1)
+
+geom = shapely.from_wkt(wkt)
+gdf = GeoDataFrame(geometry=[geom], crs=epsg)
+gdf.to_file(dst_shp)

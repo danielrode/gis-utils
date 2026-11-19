@@ -2,50 +2,33 @@
 # -*- coding: utf-8 -*-
 # Author: Daniel Rode
 # Created: 14 Nov 2024
-# Updated: 18 Mar 2025
 
 
 # Description: Clip a given raster file to a polygon.
 
 
 import sys
-from sys import exit
 from pathlib import Path
 
-import pyogrio
-import rasterio as rio
-from rasterio.mask import mask
+from vogeler.stdlib import print2
+from vogeler.extlib import clip_tif
 
 
-EXE_NAME = sys.argv[0].split('/')[-1]  # This script's filename
-HELP_TEXT = f"Usage: {EXE_NAME}  TIF_PATH  SHP_PATH  OUT_RAST_PATH"
+# Constants
+HELP_TEXT = f"Usage: {Path(sys.argv[0]).name} SRC_TIF SHP DST_TIF"
 
+
+# Main
 
 # Parse command line arguments
 args = sys.argv[1:]
 try:
     rast_path = Path(args[0])
-    shape_path = Path(args[1])
+    shp_path = Path(args[1])
     out_path = Path(args[2])
 except IndexError:
-    print(HELP_TEXT)
-    exit(1)
+    print2(HELP_TEXT)
+    sys.exit(1)
 
-# Import polygon data
-gdf = pyogrio.read_dataframe(shape_path)
-
-# Import region of raster data within polygons
-with rio.open(rast_path) as f:
-    rast, rast_transform = mask(
-        f, gdf.to_crs(f.crs)['geometry'], crop=True,
-    )
-    rast_meta = f.meta
-
-# Save clipped raster to file
-_, h, w = rast.shape
-rast_meta["driver"] = "GTiff"
-rast_meta["transform"] = rast_transform
-rast_meta["height"] = h
-rast_meta["width"] = w
-with rio.open(out_path, "w", **rast_meta) as f:
-    f.write(rast)
+# Clip raster
+clip_tif(rast_path, shp_path, out_path)

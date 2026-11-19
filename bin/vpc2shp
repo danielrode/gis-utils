@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+# author: daniel rode
+# created: 12 aug 2026
+# updated: -
+
+
+"""Create a vector file of asset boundaries for a given VPC."""
+
+
+import sys
+import json
+from pathlib import Path
+
+from geopandas import GeoDataFrame
+from shapely.geometry import Polygon
+
+
+vpc_fp = Path(sys.argv[1])
+dst_fp = Path(sys.argv[2])
+
+vpc = json.loads(vpc_fp.read_text())
+
+gdf = GeoDataFrame(
+    {'tile': [i['id'] for i in vpc['features']]},
+    geometry=[
+        Polygon(i['geometry']['coordinates'][0]) for i in vpc['features']
+    ],
+    crs="EPSG:4326",
+)
+
+gdf.to_file(dst_fp)

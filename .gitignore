@@ -2,3 +2,7 @@
 *.log
 tmp-*
 __pycache__
+todo
+todo-*
+TODO
+TODO-*

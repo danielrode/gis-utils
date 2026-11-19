@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Daniel Rode
+# Created: 02 Oct 2024
+
+
+# Description: Generate a virtual point cloud for a given LiDAR collection.
+
+
+import sys
+from pathlib import Path
+
+from vogeler.stdlib import print2
+from vogeler.sp import build_vpc
+
+
+# Constants
+HELP_TEXT = f"Usage: {Path(sys.argv[0]).name} LAS_DIR  DST_VPC"
+LAS_EXTS = (
+    "las",
+    "laz",
+)
+
+
+# Main
+
+# Parse command line arguments
+args = sys.argv[1:]
+try:
+    src_dir = Path(args[0])
+    dst_path = Path(args[1])
+except IndexError:
+    print2(HELP_TEXT)
+    sys.exit(1)
+
+if not src_dir.is_dir():
+    print2("error: Directory not found:", src_dir)
+    sys.exit(1)
+
+# Create virtual point cloud mosaic
+las_paths = [
+    las_path
+    for ext in LAS_EXTS
+    for las_path in src_dir.glob(f"*.{ext}", case_sensitive=False)
+    if las_path.is_file()
+]
+build_vpc(las_paths, dst_path)

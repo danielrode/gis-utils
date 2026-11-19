@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+# author: daniel rode
+# dependencies: pdal, gdal
+# created: 05 oct 2026
+# updated: -
+
+
+"""Rename GeoTIFF band (layer) name (description) in-place."""
+
+
+import sys
+from pathlib import Path
+
+import rasterio as rio
+
+
+EXE_NAME = Path(__file__).name
+HELP = f"Usage: {EXE_NAME} TIFF_PATH BAND_NUM NEW_BAND_NAME"
+
+
+def print2(*a, **kw):
+    print(*a, **kw, file=sys.stderr)
+
+
+def main():
+    # Parse command line arguments
+    try:
+        tif_fp = Path(sys.argv[1])
+        band = int(sys.argv[2])
+        new_name = sys.argv[3]
+    except IndexError:
+        print2(HELP)
+        sys.exit(1)
+
+    # Update band description (bands use 1-based indexing)
+    with rio.open(tif_fp, 'r+') as f:
+        f.set_band_description(band, new_name)
+
+if __name__ == '__main__':
+    main()
+    sys.exit(0)

@@ -39,3 +39,6 @@ def main [col: string, ...pth: string] {
 	}
 }
 
+
+
+# todo rename to shp-hists and have it produce a CLI histogram for each numeric column found in the given shapefile path

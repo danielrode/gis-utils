@@ -7,9 +7,6 @@
 # Updated: 19 Nov 2024
 
 
-# sudo apt install python3-gdal
-
-
 import sys
 from sys import exit
 
