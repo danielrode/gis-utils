@@ -8,9 +8,7 @@ Small simple UNIX-like utilities and functions to make working with geospatial d
 
 ```powershell
 # PowerShell
-podman machine init
-podman machine start
-podman run --rm -it --volume "$(get-location):/wd" --workdir "/wd" ghcr.io/vogelerlab/gis-utils:main
+wslc run --rm -it --volume "$(get-location):/wd" --workdir "/wd" ghcr.io/vogelerlab/gis-utils:main
 ```
 
 ### Linux
