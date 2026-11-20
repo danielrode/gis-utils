@@ -258,6 +258,19 @@ RUN cargo build --release
 
 
 ###############################################################################
+# -- HUGGINGFACE CLI BUILD IMAGE --
+############################################################################
+
+FROM base0 AS builder_hfcli
+
+# Install Alpine Linux packages for building HF CLI
+RUN apk add pipx
+
+# Get HF CLI
+RUN pipx install -vvv --global huggingface_hub
+
+
+###############################################################################
 # -- FINAL IMAGE --
 ############################################################################
 
@@ -283,20 +296,22 @@ RUN ash <<'EOF'
 EOF
 
 # Install binary dependencies from build containers
-COPY --from=builder_wrench /usr/src/wrench/build/pdal_wrench /usr/local/bin/
 COPY --from=builder_r /usr/local/rlib /usr/local/rlib
 COPY --from=builder_py /usr/local/pylib /usr/local/pylib
-COPY --from=builder_lastools /LAStools/bin64 /opt/lastools/bin
+COPY --from=builder_lastools /LAStools/bin64/ /usr/local/bin/
+COPY --from=builder_wrench /usr/src/wrench/build/pdal_wrench /usr/local/bin/
 COPY --from=builder_goose /usr/src/goose/target/release/goose /usr/local/bin/
+COPY --from=builder_hfcli /usr/local/bin/* /usr/local/bin/
+COPY --from=builder_hfcli /opt/pipx/venvs/huggingface-hub \
+    /opt/pipx/venvs/huggingface-hub
 
 ENV R_LIBS_USER=/usr/local/rlib
 
 # Install scripts from this repo
-COPY bin /vogeler/bin
-COPY lib /vogeler/lib
+COPY ../bin ../lib /vogeler/
 
 ENV PYTHONPATH="/vogeler/lib/py"
-ENV PATH="/vogeler/bin:/usr/local/pylib/bin:$PATH:/opt/lastools/bin"
+ENV PATH="/vogeler/bin:/usr/local/pylib/bin:$PATH"
 
 # Set proj to download transformation assets on demand
 ENV PROJ_NETWORK=ON

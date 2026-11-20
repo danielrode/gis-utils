@@ -28,14 +28,17 @@ echo "Building container..."
 git_commit="$(git rev-parse HEAD . | head -1)"
 podman build \
     --tag "gis-utils:latest" \
-    . \
+    --file docker/Dockerfile \
+    .. \
 ;
-podman tag gis-utils:latest gis-utils:main
+podman tag gis-utils:latest \
+    gis-utils:main
+    ghcr.io/danielrode/gis-utils:main \
+    ghcr.io/danielrode/gis-utils:latest \
+;
 
 # Publish image
 echo 'To publish image:
 podman push gis-utils:main ghcr.io/danielrode/gis-utils:main
 podman push gis-utils:latest ghcr.io/danielrode/gis-utils:latest
-podman pull ghcr.io/danielrode/gis-utils:main
-podman pull ghcr.io/danielrode/gis-utils:latest
 '
