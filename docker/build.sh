@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # author: daniel rode
 # dependencies:
-#   podman 5.8.8
+#   podman 5.8.9
 #   git
 
 
@@ -18,11 +18,6 @@ cd "$(dirname "$0")"
 # Log output
 exec > >(tee "$(basename "$0").log") 2>&1
 
-# Use Podman instead of Docker
-function docker {
-    podman "$@"
-}
-
 
 ###############################################################################
 # -- Main --
@@ -31,12 +26,16 @@ function docker {
 # Build main container
 echo "Building container..."
 git_commit="$(git rev-parse HEAD . | head -1)"
-docker build \
+podman build \
     --tag "gis-utils:latest" \
     . \
 ;
-docker tag gis-utils:latest gis-utils:dev
+podman tag gis-utils:latest gis-utils:main
 
 # Publish image
-docker push gis-utils:dev ghcr.io/danielrode/gis-utils:dev
-docker pull ghcr.io/danielrode/gis-utils:dev
+echo 'To publish image:
+podman push gis-utils:main ghcr.io/danielrode/gis-utils:main
+podman push gis-utils:latest ghcr.io/danielrode/gis-utils:latest
+podman pull ghcr.io/danielrode/gis-utils:main
+podman pull ghcr.io/danielrode/gis-utils:latest
+'
